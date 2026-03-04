@@ -117,8 +117,8 @@ class MainMenuScreen extends StatelessWidget {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      _LogoBadge(label: "Makebook", color: Colors.orange.shade700),
-                      _LogoBadge(label: "CREOTEC", color: Colors.green.shade600),
+                      _LogoBadge(label: "Makeblock", color: Colors.orange.shade700),
+                      _LogoBadge(label: "CREOTEC", color: Colors.blue.shade700),
                     ],
                   ),
                 ),

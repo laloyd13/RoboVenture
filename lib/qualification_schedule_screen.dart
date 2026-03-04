@@ -109,6 +109,7 @@ class QualificationScheduleScreen extends StatelessWidget {
                     'QUALIFICATION SCHEDULE',
                     textAlign: TextAlign.center,
                     style: GoogleFonts.anta(
+                      color: themeColor,
                       fontSize: 26,
                       fontWeight: FontWeight.w900,
                       letterSpacing: 1.2,
