@@ -1,13 +1,16 @@
+// ignore_for_file: deprecated_member_use
+
 import 'package:flutter/material.dart';
-import 'package:roboventure/main.dart';
 import 'qualification_schedule_screen.dart';
 
 class MainMenuScreen extends StatelessWidget {
+  final int categoryId;
   final String competitionTitle;
   final Color accentColor;
 
   const MainMenuScreen({
     super.key,
+    required this.categoryId, // Fixed: Changed semicolon to comma
     required this.competitionTitle,
     required this.accentColor,
   });
@@ -91,6 +94,7 @@ class MainMenuScreen extends StatelessWidget {
                             context,
                             MaterialPageRoute(
                               builder: (_) => QualificationScheduleScreen(
+                                categoryId: categoryId, // Now passing the required ID
                                 competitionTitle: competitionTitle,
                                 themeColor: accentColor,
                               ),
@@ -133,7 +137,7 @@ class MainMenuScreen extends StatelessWidget {
   Widget _buildGradientText(String text, double fontSize) {
     return ShaderMask(
       shaderCallback: (bounds) => LinearGradient(
-        colors: [accentColor.withOpacityValue(0.7), accentColor],
+        colors: [accentColor.withOpacity(0.7), accentColor],
       ).createShader(bounds),
       child: Text(
         text,
@@ -174,15 +178,15 @@ class _MenuButton extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 18),
         decoration: BoxDecoration(
-          color: isDisabled ? Colors.grey.withOpacityValue(0.1) : (isPrimary ? color : Colors.white),
+          color: isDisabled ? Colors.grey.withOpacity(0.3) : (isPrimary ? color : Colors.white),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isDisabled ? Colors.grey.withOpacityValue(0.3) : color,
+            color: isDisabled ? Colors.grey.withOpacity(0.3) : color,
             width: 2,
           ),
           boxShadow: isDisabled ? [] : [
             BoxShadow(
-              color: color.withOpacityValue(0.3),
+              color: color.withOpacity(0.3),
               blurRadius: 12,
               offset: const Offset(0, 6),
             ),
@@ -227,7 +231,7 @@ class _LogoBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacityValue(0.05),
+            color: Colors.black.withOpacity(0.05),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -253,7 +257,7 @@ class GeometricBackgroundPainter extends CustomPainter {
     ];
 
     for (int i = 0; i < polygons.length; i++) {
-      paint.color = const Color(0xFFD6D6E5).withOpacityValue(0.1 + (i * 0.05));
+      paint.color = const Color(0xFFD6D6E5).withOpacity(0.8 + (i * 0.05));
       final path = Path()..addPolygon(polygons[i], true);
       canvas.drawPath(path, paint);
     }

@@ -1,17 +1,11 @@
+// ignore_for_file: deprecated_member_use
+
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart'; // Ensure path_provider is in pubspec.yaml
+import 'package:path_provider/path_provider.dart';
 import 'dart:ui' as ui;
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
-import 'package:roboventure/main.dart'; 
-
-void main() {
-  runApp(const MaterialApp(
-    home: ScoringPage(),
-    debugShowCheckedModeBanner: false,
-  ));
-}
 
 // --- SignaturePad Widget for freehand drawing ---
 class SignaturePad extends StatefulWidget {
@@ -25,7 +19,6 @@ class SignaturePad extends StatefulWidget {
 }
 
 class SignaturePadState extends State<SignaturePad> {
-  // Logic: Use a local reference to points for faster UI updates
   void _handlePanUpdate(DragUpdateDetails details) {
     RenderBox renderBox = context.findRenderObject() as RenderBox;
     Offset localPosition = renderBox.globalToLocal(details.globalPosition);
@@ -43,9 +36,12 @@ class SignaturePadState extends State<SignaturePad> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(widget.label, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-            IconButton(
-              icon: const Icon(Icons.clear, color: Colors.white70, size: 20),
-              onPressed: () => setState(() => widget.delegate.clear()),
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: IconButton(
+                icon: const Icon(Icons.clear, color: Colors.white70, size: 20),
+                onPressed: () => setState(() => widget.delegate.clear()),
+              ),
             ),
           ],
         ),
@@ -57,7 +53,6 @@ class SignaturePadState extends State<SignaturePad> {
             color: Colors.white,
             height: 100,
             width: double.infinity,
-            // CustomPaint will now repaint immediately because of setState above
             child: CustomPaint(
               painter: SignaturePainter(points: List.from(widget.delegate.points)),
             ),
@@ -70,7 +65,6 @@ class SignaturePadState extends State<SignaturePad> {
 
 class SignaturePainter extends CustomPainter {
   SignaturePainter({required this.points});
-
   final List<Offset?> points;
 
   @override
@@ -93,34 +87,38 @@ class SignaturePainter extends CustomPainter {
 
 class SaveDelegate {
   List<Offset?> points = <Offset?>[];
-
-  void addPoint(Offset? point) {
-    points.add(point); 
-  }
-
-  void clear() {
-    points.clear(); 
-  }
+  void addPoint(Offset? point) => points.add(point); 
+  void clear() => points.clear(); 
 }
 
 // Color Palette
-const Color primaryPurple = Color(0xFF7B52A1);
+const Color primaryPurple = Color(0xFF7B2FBE);
 const Color badgePurple = Color(0xFFC8BFE1);
 const Color accentYellow = Color(0xFFF9D949);
 const Color missionBlue = Color(0xFF8BA3C7);
 const Color missionGreen = Color(0xFF76A379);
+const Color missionAmber = Color(0xFFC7A38B);
 const Color missionPurple = Color(0xFF8789C0);
 const Color missionLavender = Color(0xFF9B8CB8);
 const Color penaltyRed = Color(0xFFB35D65);
 const Color bgGrey = Color(0xFFF0F0F0);
 const Color inputGrey = Color(0xFFE8E8E8);
-const Color dividerGrey = Color(0xFFD6D6E5);
+const Color confirmPurple = Color(0xFF4A2E83);
 const Color startGreen = Color(0xFF5E975E);
 const Color resetPurple = Color(0xFF79569A);
-const Color confirmPurple = Color(0xFF4A2E83);
 
 class ScoringPage extends StatefulWidget {
-  const ScoringPage({super.key});
+  final String teamId;
+  final String teamName;
+  final int categoryId;
+
+  // Constructor now accepts data from the Schedule Screen
+  const ScoringPage({
+    super.key, 
+    required this.teamId, 
+    required this.teamName, 
+    required this.categoryId
+  });
 
   @override
   State<ScoringPage> createState() => _ScoringPageState();
@@ -129,30 +127,31 @@ class ScoringPage extends StatefulWidget {
 class _ScoringPageState extends State<ScoringPage> {
   final SaveDelegate _captainDelegate = SaveDelegate();
   final SaveDelegate _refereeDelegate = SaveDelegate();
-
-  // Fixed: Diagnostic 'prefer_final_fields'
   final GlobalKey _globalKey = GlobalKey(); 
+
+  // Helper to determine category name based on ID
+  String get _categoryName {
+    switch (widget.categoryId) {
+      case 1: return "Aspiring Makers";
+      case 2: return "Innovators";
+      case 3: return "Master Builders";
+      default: return "RoboVenture Category";
+    }
+  }
 
   Future<void> _saveToGallery() async {
     try {
       RenderRepaintBoundary? boundary = _globalKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) return;
-
       ui.Image image = await boundary.toImage(pixelRatio: 3.0); 
       ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png); 
       Uint8List pngBytes = byteData!.buffer.asUint8List(); 
-
       final tempDir = await getTemporaryDirectory(); 
-      final file = await File('${tempDir.path}/match_summary_${DateTime.now().millisecondsSinceEpoch}.png').create(); 
+      final file = await File('${tempDir.path}/match_${widget.teamId}_${DateTime.now().millisecondsSinceEpoch}.png').create(); 
       await file.writeAsBytes(pngBytes); 
-
-      // Fixed: Diagnostic 'avoid_print'
-      debugPrint('Saved to path: ${file.path}'); 
-
-      // Fixed: Diagnostic 'use_build_context_synchronously'
+      
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Match summary is saved to the gallery"))); 
-
     } catch (e) {
       debugPrint('Error saving file: $e'); 
     }
@@ -164,8 +163,6 @@ class _ScoringPageState extends State<ScoringPage> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (BuildContext context) {
-        // Use StatefullyBuilder if the parent needs to react, 
-        // but for signatures, SignaturePad's internal setState is usually enough.
         return IntrinsicHeight(
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
@@ -175,7 +172,6 @@ class _ScoringPageState extends State<ScoringPage> {
             ),
             child: Column(
               children: [
-                // CLOSE BUTTON ROW
                 Align(
                   alignment: Alignment.topRight,
                   child: IconButton(
@@ -185,17 +181,16 @@ class _ScoringPageState extends State<ScoringPage> {
                 ),
                 const Text("SINGLE MATCH SUMMARY", 
                   style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
-                // ... rest of your UI code remains the same
                 const SizedBox(height: 10),
-                const Text("ST SCHO-BOTICS 1", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                const Text("C002R", style: TextStyle(color: Colors.white70, fontSize: 14)),
+                Text(widget.teamName, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                Text(widget.teamId, style: const TextStyle(color: Colors.white70, fontSize: 14)),
                 const SizedBox(height: 25),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    _buildSummaryLabel("2", "MATCH"),
-                    _buildSummaryLabel("290", "TOTAL SCORE"),
-                    _buildSummaryLabel("00:15", "TIME"),
+                    _buildSummaryLabel("1", "MATCH"),
+                    _buildSummaryLabel("0", "TOTAL SCORE"),
+                    _buildSummaryLabel("00:00", "TIME"),
                   ],
                 ),
                 const SizedBox(height: 30),
@@ -251,17 +246,23 @@ class _ScoringPageState extends State<ScoringPage> {
             elevation: 0,
             backgroundColor: primaryPurple,
             automaticallyImplyLeading: false,
-            title: Row(
-              children: [
-                Container(
-                  width: 32,
-                  height: 32,
-                  decoration: const BoxDecoration(color: Colors.white24, shape: BoxShape.circle),
-                  child: const Center(child: Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 16)),
+            title: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 28, height: 28,
+                      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                      child: const Center(child: Icon(Icons.arrow_back_ios_new_rounded, color: primaryPurple, size: 12)),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text("BACK", style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+                  ],
                 ),
-                const SizedBox(width: 10),
-                const Text("BACK", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-              ],
+              ),
             ),
             actions: [
               Container(
@@ -308,7 +309,7 @@ class _ScoringPageState extends State<ScoringPage> {
                         const Expanded(
                           child: Padding(
                             padding: EdgeInsets.only(bottom: 5),
-                            child: Text("ASPIRING MAKERS FORM", 
+                            child: Text("ROBOVENTURE SCORING", 
                               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: primaryPurple)),
                           ),
                         ),
@@ -322,7 +323,7 @@ class _ScoringPageState extends State<ScoringPage> {
                       decoration: BoxDecoration(
                         color: Colors.white, 
                         borderRadius: BorderRadius.circular(25),
-                        boxShadow: [BoxShadow(color: Colors.black.withOpacityValue(0.05), blurRadius: 10, offset: const Offset(0, 5))]
+                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 5))]
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -330,40 +331,31 @@ class _ScoringPageState extends State<ScoringPage> {
                           const Text("MATCH INFORMATION", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 11)),
                           const SizedBox(height: 20),
                           _buildScoringField("REFEREE NAME", "Rolly"),
-                          _buildScoringField("TEAM NAME", "Bossing"),
+                          _buildScoringField("TEAM NAME", widget.teamName), // Updated
                           Row(
                             children: [
-                              Expanded(child: _buildScoringField("TEAM ID", "C001R")),
+                              Expanded(child: _buildScoringField("TEAM ID", widget.teamId)), // Updated
                               const SizedBox(width: 15),
-                              Expanded(child: _buildScoringDropdown("CATEGORY", "Aspiring Makers")),
+                              Expanded(child: _buildScoringDropdown("CATEGORY", _categoryName)), // Updated
                             ],
                           ),
                           _buildScoringDropdown("COMPETITION INFO", "Qualification"),
                           const SizedBox(height: 10),
                           const Text("AUTOMATIC MISSION", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 11)),
                           const Divider(height: 30),
-                          _buildMissionCard("M01 Line Following", "0", "20", "0", missionBlue),
+                          _buildMissionCard("M01 Smart Triage Sorting(Cylinder)", "0", "30", "0", missionBlue),
                           const SizedBox(height: 20),
-                          _buildMissionCard("M02 Object Manipulation", "0", "30", "0", missionGreen.withOpacityValue(0.7)),
+                          _buildMissionCard("M02 Smart Triage Sorting(Cube)", "0", "30", "0", missionGreen.withOpacity(0.7)),
                           const SizedBox(height: 20),
-                          _buildMissionCard("M03 Fruit Collection", "0", "20", "0", missionPurple.withOpacityValue(0.7)),
+                          _buildMissionCard("M03 LifeSaver Alert", "0", "30", "0", missionAmber.withOpacity(0.7)),
                           const SizedBox(height: 20),
-                          _buildMissionCard("M04 Yield Management", "0", "30", "0", missionLavender.withOpacityValue(0.7)),
+                          _buildMissionCard("M04 Critical Rescue Delivery", "0", "30", "0", missionPurple.withOpacity(0.7)),
+                          const SizedBox(height: 30),
+                          _buildMissionCard("M05 Safe Passage Protocol", "0", "25", "0", missionLavender.withOpacity(0.7)),
                           const SizedBox(height: 30),
                           const Text("PENALTY", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 11)),
                           const Divider(height: 30),
                           _buildMissionCard("VIOLATION", "0", "0", "0", penaltyRed),
-                          const SizedBox(height: 15),
-                          Row(
-                            children: [
-                              Container(
-                                width: 20, height: 20,
-                                decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), color: Colors.grey.shade100),
-                              ),
-                              const SizedBox(width: 10),
-                              const Text("Disqualified", style: TextStyle(color: primaryPurple, fontWeight: FontWeight.bold)),
-                            ],
-                          ),
                           const SizedBox(height: 30),
                           const Text("SINGLE MATCH SCORE", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 11)),
                           const SizedBox(height: 20),
@@ -404,7 +396,7 @@ class _ScoringPageState extends State<ScoringPage> {
       decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(20)),
       child: Column(
         children: [
-          Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          Text(title, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           const SizedBox(height: 15),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -412,19 +404,13 @@ class _ScoringPageState extends State<ScoringPage> {
               _buildCounterBtn(Icons.remove),
               Container(
                 margin: const EdgeInsets.symmetric(horizontal: 15),
-                width: 90, height: 90,
+                width: 70, height: 70,
                 alignment: Alignment.center,
                 decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                child: Text(qty, style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold)),
+                child: Text(qty, style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
               ),
               _buildCounterBtn(Icons.add),
             ],
-          ),
-          const SizedBox(height: 5),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-            decoration: BoxDecoration(color: accentYellow, borderRadius: BorderRadius.circular(5)),
-            child: const Text("Quantity", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10)),
           ),
           const SizedBox(height: 15),
           Row(
@@ -472,7 +458,7 @@ class _ScoringPageState extends State<ScoringPage> {
             decoration: BoxDecoration(color: inputGrey, borderRadius: BorderRadius.circular(5)),
             padding: const EdgeInsets.symmetric(horizontal: 10),
             alignment: Alignment.centerLeft,
-            child: Text(value, style: const TextStyle(fontSize: 16)),
+            child: Text(value, style: const TextStyle(fontSize: 14)),
           ),
           Positioned(top: -12, left: 5, child: Text(label, style: const TextStyle(color: primaryPurple, fontWeight: FontWeight.bold, fontSize: 10))),
         ],
@@ -493,7 +479,7 @@ class _ScoringPageState extends State<ScoringPage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(value, style: const TextStyle(fontSize: 14)),
+                Expanded(child: Text(value, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis)),
                 const Icon(Icons.arrow_drop_down, color: Colors.black54),
               ],
             ),
@@ -505,21 +491,30 @@ class _ScoringPageState extends State<ScoringPage> {
   }
 
   Widget _buildCounterBtn(IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: const BoxDecoration(color: accentYellow, shape: BoxShape.circle),
-      child: Icon(icon, color: Colors.black, size: 24),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () {}, 
+        child: Container(
+          padding: const EdgeInsets.all(4),
+          decoration: const BoxDecoration(color: accentYellow, shape: BoxShape.circle),
+          child: Icon(icon, color: Colors.black, size: 24),
+        ),
+      ),
     );
   }
 
   Widget _buildActionBtn(String label, Color color, {double fontSize = 24, required VoidCallback onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: double.infinity, height: 55,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
-        child: Text(label, style: TextStyle(color: Colors.white, fontSize: fontSize, fontWeight: FontWeight.bold)),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: double.infinity, height: 55,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
+          child: Text(label, style: TextStyle(color: Colors.white, fontSize: fontSize, fontWeight: FontWeight.bold)),
+        ),
       ),
     );
   }
@@ -541,7 +536,7 @@ class GeometricBackgroundPainter extends CustomPainter {
     ];
 
     for (int i = 0; i < polygons.length; i++) {
-      paint.color = const Color(0xFFD6D6E5).withOpacityValue(0.12 + (i % 3 * 0.08));
+      paint.color = const Color(0xFFD6D6E5).withOpacity(0.12 + (i % 3 * 0.08));
       final path = Path()..addPolygon(polygons[i], true);
       canvas.drawPath(path, paint);
     }
