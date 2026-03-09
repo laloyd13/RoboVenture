@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'dashboard.dart';
+import 'loading_screen.dart';
 
 /// Extension to replace deprecated `withOpacity()`
 extension ColorX on Color {
@@ -30,7 +30,7 @@ class RoboVentureApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF7B2FBE)),
         useMaterial3: true,
       ),
-      home: const DashboardScreen(), // ← Landing point is now the Dashboard
+      home: const LoadingScreen(),
     );
   }
 }
