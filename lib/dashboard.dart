@@ -13,6 +13,9 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
+
+  Future<List<dynamic>>? _categoriesFuture;
+
   final Map<String, dynamic> _categoryThemes = {
     'Aspiring Makers': {'icon': Icons.build_circle_outlined, 'color': const Color(0xFF7B2FBE)},
     'Emerging Innovators': {'icon': Icons.lightbulb_outline, 'color': const Color(0xFF3498DB)},
@@ -21,19 +24,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
     'Soccer': {'icon': Icons.sports_soccer_outlined, 'color': const Color(0xFFE74C3C)},
   };
 
+  @override
+  void initState() {
+    super.initState();
+    _categoriesFuture = _fetchCategories();
+  }
+
+// --- FETCH CATEGORIES FROM API ---
   Future<List<dynamic>> _fetchCategories() async {
-    final url = Uri.parse('http://175.20.0.32/roboventure_api/get_categories.php');
+    final url = Uri.parse('http://175.20.0.50/roboventure_api/get_categories.php');
     
     try {
       final response = await http.get(url);
       if (response.statusCode == 200) {
-        return json.decode(response.body);
+        final List<dynamic> data = json.decode(response.body);
+
+        // Sort: active first, then inactive — each group sorted A→Z by category_type
+        data.sort((a, b) {
+          final aActive = (a['status'] == 'active') ? 0 : 1;
+          final bActive = (b['status'] == 'active') ? 0 : 1;
+          if (aActive != bActive) return aActive.compareTo(bActive);
+          final aName = (a['category_type'] ?? '').toString().toLowerCase();
+          final bName = (b['category_type'] ?? '').toString().toLowerCase();
+          return aName.compareTo(bName);
+        });
+
+        return data;
       } else {
         throw Exception('Server error: ${response.statusCode}');
       }
     } catch (e) {
       throw Exception('Database connection failed. \n$e');
     }
+  }
+
+  Future<void> _handleRefresh() async {
+    setState(() {
+      _categoriesFuture = _fetchCategories();
+    });
+    await _categoriesFuture;
   }
 
   @override
@@ -46,8 +75,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _buildHeader(),
             Expanded(
               child: FutureBuilder<List<dynamic>>(
-                future: _fetchCategories(),
+                future: _categoriesFuture,
                 builder: (context, snapshot) {
+                  if (_categoriesFuture == null) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator(color: Color(0xFF7B2FBE)));
                   } else if (snapshot.hasError) {
@@ -58,44 +91,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                   final categories = snapshot.data!;
 
-                  return SingleChildScrollView(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildWelcomeBanner(),
-                        const SizedBox(height: 28),
-                        _sectionLabel('COMPETITIONS'),
-                        const SizedBox(height: 14),
-
-                        for (var cat in categories) ...[
-                          (() {
-                            // 1. Extract the ID and other data from the current category map
-                            final int catId = int.tryParse(cat['category_id'].toString()) ?? 0;
-                            final String categoryName = cat['category_type'] ?? 'Unknown';
-                            final bool isActive = cat['status'] == 'active'; 
-
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 12.0),
-                              child: _CompetitionCard(
-                                title: categoryName,
-                                subtitle: isActive 
-                                    ? "Qualification & Championship rounds" 
-                                    : "Coming soon — not yet available",
-                                icon: _getIconForCategory(categoryName),
-                                accentColor: _getColorForCategory(categoryName),
-                                isLocked: !isActive,
-                                onTap: () => _navigateToMenu(
-                                  context, 
-                                  catId, // Pass the ID here
-                                  categoryName.toUpperCase(), 
-                                  _getColorForCategory(categoryName)
-                                ),
-                              ),
-                            );
-                          }()),
-                        ],    
-                      ],
+                  return RefreshIndicator(
+                    onRefresh: _handleRefresh,
+                    color: const Color(0xFF7B2FBE),
+                    backgroundColor: Colors.white,
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildWelcomeBanner(),
+                          const SizedBox(height: 28),
+                          _sectionLabel('COMPETITIONS', count: categories.length),
+                          const SizedBox(height: 14),
+                          for (var cat in categories) ...[
+                            _buildCategoryCard(context, cat),
+                          ],
+                        ],
+                      ),
                     ),
                   );
                 },
@@ -108,13 +122,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // --- Updated Navigation Method ---
+  Widget _buildCategoryCard(BuildContext context, dynamic cat) {
+    final int catId = int.tryParse(cat['category_id'].toString()) ?? 0;
+    final String categoryName = cat['category_type'] ?? 'Unknown';
+    final bool isActive = cat['status'] == 'active';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12.0),
+      child: _CompetitionCard(
+        title: categoryName,
+        subtitle: isActive
+            ? "Qualification & Championship rounds"
+            : "Coming soon — not yet available",
+        icon: _getIconForCategory(categoryName),
+        accentColor: _getColorForCategory(categoryName),
+        isLocked: !isActive,
+        onTap: () => _navigateToMenu(
+          context,
+          catId,
+          categoryName.toUpperCase(),
+          _getColorForCategory(categoryName),
+        ),
+      ),
+    );
+  }
+
   void _navigateToMenu(BuildContext context, int id, String title, Color color) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => MainMenuScreen(
-          categoryId: id, // Now uses the id passed from the card
+          categoryId: id,
           competitionTitle: title,
           accentColor: color,
         ),
@@ -122,7 +160,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // --- Theme Helper Methods ---
   IconData _getIconForCategory(String? name) {
     if (name == null) return Icons.help_outline;
     for (var key in _categoryThemes.keys) {
@@ -203,18 +240,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 10),
           Text(error, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)),
           const SizedBox(height: 15),
-          ElevatedButton(onPressed: () => setState(() {}), child: const Text("Retry")),
+          ElevatedButton(onPressed: _handleRefresh, child: const Text("Retry")),
         ],
       ),
     );
   }
 
-  Widget _sectionLabel(String text) {
+  Widget _sectionLabel(String text, {int? count}) {
     return Row(
       children: [
         Container(width: 3, height: 16, decoration: BoxDecoration(color: const Color(0xFF7B2FBE), borderRadius: BorderRadius.circular(2))),
         const SizedBox(width: 8),
         Text(text, style: const TextStyle(color: Color(0xFF5B2D8E), fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+        if (count != null) ...[
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(color: const Color(0xFF7B2FBE).withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
+            child: Text('$count', style: const TextStyle(color: Color(0xFF7B2FBE), fontSize: 10, fontWeight: FontWeight.bold)),
+          ),
+        ],
       ],
     );
   }
@@ -275,14 +320,12 @@ class _CompetitionCardState extends State<_CompetitionCard> {
           decoration: BoxDecoration(
             color: widget.isLocked ? Colors.white.withOpacity(0.7) : Colors.white,
             borderRadius: BorderRadius.circular(16),
-            // --- UPDATED BORDER LOGIC ---
             border: Border.all(
               color: widget.isLocked 
                   ? widget.accentColor.withOpacity(0.2) 
-                  : widget.accentColor.withOpacity(0.8), // Stronger opacity (80%)
-              width: 2.0, // Increased thickness from 1.2 to 2.0
+                  : widget.accentColor.withOpacity(0.8), 
+              width: 2.0, 
             ),
-            // Added a subtle shadow to match the "glow" in your image
             boxShadow: [
               if (!widget.isLocked)
                 BoxShadow(

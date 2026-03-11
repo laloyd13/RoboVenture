@@ -6,31 +6,127 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'scoring.dart';
 
-class ScheduleEntry {
-  final int matchNumber;
-  final String teamId;
-  final String teamName;
+// ─────────────────────────────────────────────
+// API CONFIG
+// ─────────────────────────────────────────────
+const String _scheduleBaseUrl = 'http://175.20.0.50/roboventure_api';
 
-  const ScheduleEntry({
-    required this.matchNumber,
-    required this.teamId,
-    required this.teamName,
+// ─────────────────────────────────────────────
+// MODELS
+// ─────────────────────────────────────────────
+class ArenaInfo {
+  final int arenaId;
+  final int arenaNumber;
+  final String arenaName;
+
+  const ArenaInfo({
+    required this.arenaId,
+    required this.arenaNumber,
+    required this.arenaName,
   });
 
-  // Factory to create an entry from JSON
+  factory ArenaInfo.fromJson(Map<String, dynamic> json) => ArenaInfo(
+        arenaId:     int.tryParse(json['arena_id']?.toString() ?? '0') ?? 0,
+        arenaNumber: int.tryParse(json['arena_number']?.toString() ?? '0') ?? 0,
+        arenaName:   json['arena_name']?.toString() ?? 'Arena',
+      );
+}
+
+class ScheduleEntry {
+  final int matchId;
+  final int matchNumber;
+  final int teamId;
+  final String teamIdDisplay;
+  final String teamName;
+  final int refereeId;
+  final int arenaNumber;
+
+  const ScheduleEntry({
+    required this.matchId,
+    required this.matchNumber,
+    required this.teamId,
+    required this.teamIdDisplay,
+    required this.teamName,
+    required this.refereeId,
+    required this.arenaNumber,
+  });
+
   factory ScheduleEntry.fromJson(Map<String, dynamic> json) {
+    String rawId       = json['team_id']?.toString() ?? '0';
+    String numericPart = rawId.replaceAll(RegExp(r'[^0-9]'), '');
+    String paddedId    = numericPart.padLeft(3, '0');
+
     return ScheduleEntry(
-      // Force match_number to int safely
-      matchNumber: int.tryParse(json['match_number'].toString()) ?? 0,
-      
-      // Force team_id to String safely (This fixes your error!)
-      teamId: json['team_id']?.toString() ?? 'N/A',
-      
-      teamName: json['team_name']?.toString() ?? 'Unknown Team',
+      matchId:       int.tryParse(json['match_id']?.toString() ?? '0') ?? 0,
+      matchNumber:   int.tryParse(json['match_number']?.toString() ?? '0') ?? 0,
+      teamId:        int.tryParse(numericPart) ?? 0,
+      teamIdDisplay: 'C${paddedId}R',
+      teamName:      json['team_name']?.toString() ?? 'Unknown Team',
+      refereeId:     int.tryParse(json['referee_id']?.toString() ?? '0') ?? 0,
+      arenaNumber:   int.tryParse(json['arena_number']?.toString() ?? '0') ?? 0,
     );
   }
 }
 
+// ─────────────────────────────────────────────
+// API SERVICE
+// ─────────────────────────────────────────────
+class _ScheduleApiService {
+  static Future<List<ArenaInfo>> fetchArenas(int categoryId) async {
+    final url = Uri.parse(
+      '$_scheduleBaseUrl/get_arena.php?category_id=$categoryId',
+    );
+    final response = await http.get(url).timeout(const Duration(seconds: 10));
+    if (response.statusCode == 200) {
+      final List<dynamic> data = json.decode(response.body);
+      return data.map((j) => ArenaInfo.fromJson(j)).toList();
+    }
+    try {
+      final body = json.decode(response.body);
+      throw Exception('Arena error: ${body['error'] ?? response.statusCode}');
+    } catch (_) {
+      throw Exception('get_arena failed [${response.statusCode}]');
+    }
+  }
+
+  static Future<List<ScheduleEntry>> fetchSchedule(
+      int categoryId, int arenaNumber) async {
+    final url = Uri.parse(
+      '$_scheduleBaseUrl/get_teamschedule.php?category_id=$categoryId&arena_number=$arenaNumber',
+    );
+    final response = await http.get(url).timeout(const Duration(seconds: 10));
+    if (response.statusCode == 200) {
+      final List<dynamic> data = json.decode(response.body);
+      final entries = data.map((j) => ScheduleEntry.fromJson(j)).toList();
+      // Sort ascending by match_number
+      entries.sort((a, b) => a.matchNumber.compareTo(b.matchNumber));
+      return entries;
+    }
+    throw Exception('get_teamschedule failed [${response.statusCode}]');
+  }
+
+  /// Returns a Set of match_ids that already have a score submitted.
+  /// Calls: get_scored_matches.php?category_id=X
+  static Future<Set<int>> fetchScoredMatchIds(int categoryId) async {
+    final url = Uri.parse(
+      '$_scheduleBaseUrl/get_scored_matches.php?category_id=$categoryId',
+    );
+    try {
+      final response = await http.get(url).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        return data
+            .map((j) => int.tryParse(j['match_id']?.toString() ?? '0') ?? 0)
+            .toSet();
+      }
+    } catch (_) {}
+    return {};
+  }
+}
+
+// ─────────────────────────────────────────────
+// SCREEN
+// ─────────────────────────────────────────────
 class QualificationScheduleScreen extends StatefulWidget {
   final int categoryId;
   final String competitionTitle;
@@ -44,26 +140,100 @@ class QualificationScheduleScreen extends StatefulWidget {
   });
 
   @override
-  State<QualificationScheduleScreen> createState() => _QualificationScheduleScreenState();
+  State<QualificationScheduleScreen> createState() =>
+      _QualificationScheduleScreenState();
 }
 
-class _QualificationScheduleScreenState extends State<QualificationScheduleScreen> {
-  
-  // Replace this URL with your actual endpoint for tbl_team
-  Future<List<ScheduleEntry>> _fetchSchedule() async {
-    final url = Uri.parse('http://175.20.0.32/roboventure_api/get_teamschedule.php?category_id=${widget.categoryId}');
-    
+class _QualificationScheduleScreenState
+    extends State<QualificationScheduleScreen>
+    with SingleTickerProviderStateMixin {
+
+  List<ArenaInfo> _arenas = [];
+  bool _arenasLoading = true;
+  String? _arenasError;
+
+  TabController? _tabController;
+
+  final Map<int, Future<List<ScheduleEntry>>> _scheduleFutures = {};
+
+  // Tracks which match_ids have already been scored
+  Set<int> _scoredMatchIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadArenas();
+    _refreshScoredIds();
+  }
+
+  @override
+  void dispose() {
+    _tabController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _refreshScoredIds() async {
+    final ids = await _ScheduleApiService.fetchScoredMatchIds(widget.categoryId);
+    if (mounted) setState(() => _scoredMatchIds = ids);
+  }
+
+  Future<void> _loadArenas() async {
+    setState(() { _arenasLoading = true; _arenasError = null; });
     try {
-      final response = await http.get(url);
-      if (response.statusCode == 200) {
-        List<dynamic> data = json.decode(response.body);
-        return data.map((json) => ScheduleEntry.fromJson(json)).toList();
-      } else {
-        throw Exception('Failed to load schedule');
-      }
+      final arenas = await _ScheduleApiService.fetchArenas(widget.categoryId);
+      _tabController?.dispose();
+      final tc = TabController(length: arenas.length, vsync: this);
+      setState(() {
+        _arenas        = arenas;
+        _tabController = tc;
+        _arenasLoading = false;
+      });
+      if (arenas.isNotEmpty) _ensureSchedule(arenas.first.arenaNumber);
+      tc.addListener(() {
+        if (!tc.indexIsChanging) {
+          _ensureSchedule(_arenas[tc.index].arenaNumber);
+        }
+      });
     } catch (e) {
-      throw Exception('Connection Error: $e');
+      setState(() { _arenasError = e.toString(); _arenasLoading = false; });
     }
+  }
+
+  void _ensureSchedule(int arenaNumber) {
+    if (!_scheduleFutures.containsKey(arenaNumber)) {
+      setState(() {
+        _scheduleFutures[arenaNumber] =
+            _ScheduleApiService.fetchSchedule(widget.categoryId, arenaNumber);
+      });
+    }
+  }
+
+  Future<void> _refreshSchedule(int arenaNumber) async {
+    setState(() {
+      _scheduleFutures[arenaNumber] =
+          _ScheduleApiService.fetchSchedule(widget.categoryId, arenaNumber);
+    });
+    // Also refresh scored IDs so status badges update
+    await Future.wait([
+      _scheduleFutures[arenaNumber]!,
+      _refreshScoredIds(),
+    ]);
+  }
+
+  // Navigate to ScoringPage and refresh scored IDs when returning
+  Future<void> _openScoringPage(BuildContext context, ScheduleEntry entry) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ScoringPage(
+          matchId:   entry.matchId,
+          teamId:    entry.teamId,
+          refereeId: entry.refereeId,
+        ),
+      ),
+    );
+    // When we come back, re-check which matches are now scored
+    _refreshScoredIds();
   }
 
   @override
@@ -73,206 +243,410 @@ class _QualificationScheduleScreenState extends State<QualificationScheduleScree
       body: SafeArea(
         child: Column(
           children: [
-            // --- Themed Header ---
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-              color: widget.themeColor,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  InkWell(
-                    onTap: () => Navigator.pop(context),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: const BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(Icons.chevron_left, color: widget.themeColor, size: 20),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'BACK',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        widget.competitionTitle.toUpperCase(),
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w900,
-                            fontStyle: FontStyle.italic),
-                      ),
-                      const Text(
-                        'QUALIFICATION',
-                        style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            // --- Section Title ---
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 25),
-              color: Colors.white,
-              child: Text(
-                'QUALIFICATION SCHEDULE',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.anta(
-                  color: widget.themeColor,
-                  fontSize: 26,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ),
-
-            // --- Dynamic List using FutureBuilder ---
-            Expanded(
-              child: FutureBuilder<List<ScheduleEntry>>(
-                future: _fetchSchedule(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return Center(child: CircularProgressIndicator(color: widget.themeColor));
-                  } else if (snapshot.hasError) {
-                    return Center(child: Text("Error: ${snapshot.error}"));
-                  } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                    return const Center(child: Text("No schedule entries found."));
-                  }
-
-                  final entries = snapshot.data!;
-
-                  return ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    itemCount: entries.length,
-                    itemBuilder: (context, index) {
-                      return _MatchCard(
-                        entry: entries[index],
-                        cardColor: widget.themeColor,
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
+            _buildHeader(),
+            _buildTitleBar(),
+            Expanded(child: _buildBody()),
           ],
         ),
       ),
     );
   }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+      color: widget.themeColor,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          InkWell(
+            onTap: () => Navigator.pop(context),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                      color: Colors.white, shape: BoxShape.circle),
+                  child: Icon(Icons.chevron_left,
+                      color: widget.themeColor, size: 20),
+                ),
+                const SizedBox(width: 8),
+                const Text('BACK',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14)),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                widget.competitionTitle.toUpperCase(),
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic),
+              ),
+              const Text('QUALIFICATION',
+                  style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTitleBar() {
+    return Column(
+      children: [
+        Container(
+          color: Colors.white,
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 20),
+          child: Text(
+            'QUALIFICATION SCHEDULE',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.anta(
+              color: widget.themeColor,
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.2,
+            ),
+          ),
+        ),
+        if (!_arenasLoading && _arenasError == null && _arenas.isNotEmpty)
+          Container(
+            color: widget.themeColor,
+            child: _buildTabBar(),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildTabBar() {
+    return AnimatedBuilder(
+      animation: _tabController!,
+      builder: (context, _) {
+        return TabBar(
+          controller: _tabController,
+          isScrollable: _arenas.length > 3,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white60,
+          indicatorColor: Colors.white,
+          indicatorWeight: 3,
+          dividerColor: Colors.transparent,
+          labelStyle:
+              const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+          unselectedLabelStyle: const TextStyle(fontSize: 12),
+          tabs: _arenas.asMap().entries.map((entry) {
+            final isSelected = _tabController!.index == entry.key;
+            return Tab(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.stadium_outlined,
+                        size: 15,
+                        color: isSelected ? Colors.white : Colors.white60),
+                    const SizedBox(width: 5),
+                    Text(entry.value.arenaName.toUpperCase()),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+
+  Widget _buildBody() {
+    if (_arenasLoading) {
+      return Center(
+          child: CircularProgressIndicator(color: widget.themeColor));
+    }
+
+    if (_arenasError != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red, size: 40),
+            const SizedBox(height: 12),
+            Text(_arenasError!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12)),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _loadArenas,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: widget.themeColor,
+                  foregroundColor: Colors.white),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_arenas.isEmpty) {
+      return const Center(
+          child: Text('No arenas found for this category.'));
+    }
+
+    return TabBarView(
+      controller: _tabController,
+      children: _arenas.map((arena) => _ArenaScheduleView(
+        arenaNumber:    arena.arenaNumber,
+        themeColor:     widget.themeColor,
+        scoredMatchIds: _scoredMatchIds,
+        scheduleFuture: _scheduleFutures[arena.arenaNumber],
+        onRefresh:      () => _refreshSchedule(arena.arenaNumber),
+        onTabVisible:   () => _ensureSchedule(arena.arenaNumber),
+        onOpenScoring:  (entry) => _openScoringPage(context, entry),
+      )).toList(),
+    );
+  }
 }
 
-class _MatchCard extends StatelessWidget {
-  final ScheduleEntry entry;
-  final Color cardColor;
+// ─────────────────────────────────────────────
+// PER-ARENA SCHEDULE VIEW
+// ─────────────────────────────────────────────
+class _ArenaScheduleView extends StatelessWidget {
+  final int arenaNumber;
+  final Color themeColor;
+  final Set<int> scoredMatchIds;
+  final Future<List<ScheduleEntry>>? scheduleFuture;
+  final Future<void> Function() onRefresh;
+  final VoidCallback onTabVisible;
+  final void Function(ScheduleEntry) onOpenScoring;
 
-  const _MatchCard({required this.entry, required this.cardColor});
+  const _ArenaScheduleView({
+    required this.arenaNumber,
+    required this.themeColor,
+    required this.scoredMatchIds,
+    required this.scheduleFuture,
+    required this.onRefresh,
+    required this.onTabVisible,
+    required this.onOpenScoring,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ScoringPage(
-              teamId: entry.teamId,
-              teamName: entry.teamName,
-              // Since _MatchCard is a separate class, you'll need to 
-              // pass categoryId to it or access it if it's in scope.
-              categoryId: 1, // Replace with the actual categoryId variable
-            ),
-          ),
-        );
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        decoration: BoxDecoration(
-          color: cardColor,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.1),
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(8),
-                  topRight: Radius.circular(8),
+    if (scheduleFuture == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => onTabVisible());
+    }
+
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      color: themeColor,
+      child: FutureBuilder<List<ScheduleEntry>>(
+        future: scheduleFuture,
+        builder: (context, snapshot) {
+          if (scheduleFuture == null) {
+            return Center(
+                child: CircularProgressIndicator(color: themeColor));
+          }
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              snapshot.data == null &&
+              !snapshot.hasError) {
+            return Center(
+                child: CircularProgressIndicator(color: themeColor));
+          }
+
+          if (snapshot.hasError) {
+            return SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: SizedBox(
+                height: 400,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.error_outline,
+                          color: Colors.red, size: 36),
+                      const SizedBox(height: 10),
+                      Text('${snapshot.error}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 12)),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        onPressed: onRefresh,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Pull down or tap to retry'),
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: themeColor,
+                            foregroundColor: Colors.white),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              child: const Row(
-                children: [
-                  SizedBox(width: 60, child: Text('MATCH:', style: _labelStyle)),
-                  SizedBox(width: 100, child: Text('TEAM ID:', style: _labelStyle)),
-                  Expanded(child: Text('TEAM NAME:', style: _labelStyle)),
-                ],
+            );
+          }
+
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            return SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: const SizedBox(
+                height: 400,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.event_busy, color: Colors.grey, size: 40),
+                      SizedBox(height: 10),
+                      Text('No matches scheduled for this arena.',
+                          style: TextStyle(color: Colors.grey)),
+                    ],
+                  ),
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 8, bottom: 12, left: 12, right: 12),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 60,
-                    child: Text(
-                      '${entry.matchNumber}',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 32,
-                          fontWeight: FontWeight.w900),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 100,
-                    child: Text(
-                      entry.teamId,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  Expanded(
-                    child: Text(
-                      entry.teamName,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
+            );
+          }
+
+          // Sort: unscored ascending first, scored ascending at the bottom
+          final entries = List<ScheduleEntry>.from(snapshot.data!);
+          entries.sort((a, b) {
+            final aScored = scoredMatchIds.contains(a.matchId) ? 1 : 0;
+            final bScored = scoredMatchIds.contains(b.matchId) ? 1 : 0;
+            if (aScored != bScored) return aScored.compareTo(bScored);
+            return a.matchNumber.compareTo(b.matchNumber);
+          });
+
+          return ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            itemCount: entries.length,
+            itemBuilder: (context, index) {
+              final entry = entries[index];
+              final isScored = scoredMatchIds.contains(entry.matchId);
+              return _MatchCard(
+                entry:     entry,
+                cardColor: themeColor,
+                isScored:  isScored,
+                onTap:     isScored ? null : () => onOpenScoring(entry),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// MATCH CARD
+// ─────────────────────────────────────────────
+class _MatchCard extends StatelessWidget {
+  final ScheduleEntry entry;
+  final Color cardColor;
+  final bool isScored;
+  final VoidCallback? onTap;
+
+  const _MatchCard({
+    required this.entry,
+    required this.cardColor,
+    required this.isScored,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Opacity(
+      opacity: isScored ? 0.4 : 1.0,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          decoration: BoxDecoration(
+            color: cardColor,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            children: [
+              // Header row
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.1),
+                  borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(8),
+                      topRight: Radius.circular(8)),
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 60,  child: Text('MATCH:',    style: _labelStyle)),
+                    const SizedBox(width: 100, child: Text('TEAM ID:',  style: _labelStyle)),
+                    const Expanded(            child: Text('TEAM NAME:', style: _labelStyle)),
+                    // "SCORED" badge — only visible when submitted
+                    if (isScored)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.25),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text('SCORED',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                  ],
+                ),
               ),
-            ),
-          ],
+              // Values row
+              Padding(
+                padding: const EdgeInsets.only(
+                    top: 8, bottom: 12, left: 12, right: 12),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 60,
+                      child: Text('${entry.matchNumber}',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 32,
+                              fontWeight: FontWeight.w900)),
+                    ),
+                    SizedBox(
+                      width: 100,
+                      child: Text(entry.teamIdDisplay,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                    Expanded(
+                      child: Text(entry.teamName,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600),
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   static const _labelStyle = TextStyle(
-    color: Colors.white70,
-    fontSize: 9,
-    fontWeight: FontWeight.bold,
-  );
+      color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold);
 }
