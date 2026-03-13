@@ -9,7 +9,10 @@ import 'scoring.dart';
 // ─────────────────────────────────────────────
 // API CONFIG
 // ─────────────────────────────────────────────
-const String _scheduleBaseUrl = 'http://175.20.0.50/roboventure_api';
+const String _scheduleBaseUrl = 'http://175.20.0.60/roboventure_api';
+
+// Fixed accent color for header and cards
+const Color _accentColor = Color(0xFF7D58B3);
 
 // ─────────────────────────────────────────────
 // MODELS
@@ -98,16 +101,13 @@ class _ScheduleApiService {
     if (response.statusCode == 200) {
       final List<dynamic> data = json.decode(response.body);
       final entries = data.map((j) => ScheduleEntry.fromJson(j)).toList();
-      // Sort ascending by match_number
       entries.sort((a, b) => a.matchNumber.compareTo(b.matchNumber));
       return entries;
     }
     throw Exception('get_teamschedule failed [${response.statusCode}]');
   }
 
-  /// Returns a Set of match_ids that already have a score submitted.
-  /// Calls: get_scored_matches.php?category_id=X
-  static Future<Set<int>> fetchScoredMatchIds(int categoryId) async {
+  static Future<Set<String>> fetchScoredMatchIds(int categoryId) async {
     final url = Uri.parse(
       '$_scheduleBaseUrl/get_scored_matches.php?category_id=$categoryId',
     );
@@ -115,9 +115,12 @@ class _ScheduleApiService {
       final response = await http.get(url).timeout(const Duration(seconds: 10));
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
-        return data
-            .map((j) => int.tryParse(j['match_id']?.toString() ?? '0') ?? 0)
-            .toSet();
+        return data.map((j) {
+          final matchId = j['match_id']?.toString() ?? '0';
+          final teamId  = j['team_id']?.toString() ?? '0';
+          // ignore: unnecessary_brace_in_string_interps
+          return '${matchId}_${teamId}';
+        }).toSet();
       }
     } catch (_) {}
     return {};
@@ -130,7 +133,7 @@ class _ScheduleApiService {
 class QualificationScheduleScreen extends StatefulWidget {
   final int categoryId;
   final String competitionTitle;
-  final Color themeColor;
+  final Color themeColor; // kept for API compatibility — not used for header/cards
 
   const QualificationScheduleScreen({
     super.key,
@@ -156,8 +159,7 @@ class _QualificationScheduleScreenState
 
   final Map<int, Future<List<ScheduleEntry>>> _scheduleFutures = {};
 
-  // Tracks which match_ids have already been scored
-  Set<int> _scoredMatchIds = {};
+  Set<String> _scoredMatchIds = {};
 
   @override
   void initState() {
@@ -213,14 +215,12 @@ class _QualificationScheduleScreenState
       _scheduleFutures[arenaNumber] =
           _ScheduleApiService.fetchSchedule(widget.categoryId, arenaNumber);
     });
-    // Also refresh scored IDs so status badges update
     await Future.wait([
       _scheduleFutures[arenaNumber]!,
       _refreshScoredIds(),
     ]);
   }
 
-  // Navigate to ScoringPage and refresh scored IDs when returning
   Future<void> _openScoringPage(BuildContext context, ScheduleEntry entry) async {
     await Navigator.push(
       context,
@@ -232,7 +232,6 @@ class _QualificationScheduleScreenState
         ),
       ),
     );
-    // When we come back, re-check which matches are now scored
     _refreshScoredIds();
   }
 
@@ -255,7 +254,7 @@ class _QualificationScheduleScreenState
   Widget _buildHeader() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-      color: widget.themeColor,
+      color: _accentColor,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -267,8 +266,8 @@ class _QualificationScheduleScreenState
                   padding: const EdgeInsets.all(4),
                   decoration: const BoxDecoration(
                       color: Colors.white, shape: BoxShape.circle),
-                  child: Icon(Icons.chevron_left,
-                      color: widget.themeColor, size: 20),
+                  child: const Icon(Icons.chevron_left,
+                      color: _accentColor, size: 20),
                 ),
                 const SizedBox(width: 8),
                 const Text('BACK',
@@ -306,14 +305,14 @@ class _QualificationScheduleScreenState
     return Column(
       children: [
         Container(
-          color: Colors.white,
+          color: Colors.grey.withOpacity(0.3),
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 20),
           child: Text(
             'QUALIFICATION SCHEDULE',
             textAlign: TextAlign.center,
             style: GoogleFonts.anta(
-              color: widget.themeColor,
+              color: const Color.fromARGB(255, 71, 32, 161),
               fontSize: 24,
               fontWeight: FontWeight.w900,
               letterSpacing: 1.2,
@@ -322,7 +321,7 @@ class _QualificationScheduleScreenState
         ),
         if (!_arenasLoading && _arenasError == null && _arenas.isNotEmpty)
           Container(
-            color: widget.themeColor,
+            color: _accentColor,
             child: _buildTabBar(),
           ),
       ],
@@ -369,8 +368,8 @@ class _QualificationScheduleScreenState
 
   Widget _buildBody() {
     if (_arenasLoading) {
-      return Center(
-          child: CircularProgressIndicator(color: widget.themeColor));
+      return const Center(
+          child: CircularProgressIndicator(color: _accentColor));
     }
 
     if (_arenasError != null) {
@@ -389,7 +388,7 @@ class _QualificationScheduleScreenState
               icon: const Icon(Icons.refresh),
               label: const Text('Retry'),
               style: ElevatedButton.styleFrom(
-                  backgroundColor: widget.themeColor,
+                  backgroundColor: _accentColor,
                   foregroundColor: Colors.white),
             ),
           ],
@@ -406,7 +405,6 @@ class _QualificationScheduleScreenState
       controller: _tabController,
       children: _arenas.map((arena) => _ArenaScheduleView(
         arenaNumber:    arena.arenaNumber,
-        themeColor:     widget.themeColor,
         scoredMatchIds: _scoredMatchIds,
         scheduleFuture: _scheduleFutures[arena.arenaNumber],
         onRefresh:      () => _refreshSchedule(arena.arenaNumber),
@@ -422,8 +420,7 @@ class _QualificationScheduleScreenState
 // ─────────────────────────────────────────────
 class _ArenaScheduleView extends StatelessWidget {
   final int arenaNumber;
-  final Color themeColor;
-  final Set<int> scoredMatchIds;
+  final Set<String> scoredMatchIds;
   final Future<List<ScheduleEntry>>? scheduleFuture;
   final Future<void> Function() onRefresh;
   final VoidCallback onTabVisible;
@@ -431,7 +428,6 @@ class _ArenaScheduleView extends StatelessWidget {
 
   const _ArenaScheduleView({
     required this.arenaNumber,
-    required this.themeColor,
     required this.scoredMatchIds,
     required this.scheduleFuture,
     required this.onRefresh,
@@ -447,19 +443,19 @@ class _ArenaScheduleView extends StatelessWidget {
 
     return RefreshIndicator(
       onRefresh: onRefresh,
-      color: themeColor,
+      color: _accentColor,
       child: FutureBuilder<List<ScheduleEntry>>(
         future: scheduleFuture,
         builder: (context, snapshot) {
           if (scheduleFuture == null) {
-            return Center(
-                child: CircularProgressIndicator(color: themeColor));
+            return const Center(
+                child: CircularProgressIndicator(color: _accentColor));
           }
           if (snapshot.connectionState == ConnectionState.waiting &&
               snapshot.data == null &&
               !snapshot.hasError) {
-            return Center(
-                child: CircularProgressIndicator(color: themeColor));
+            return const Center(
+                child: CircularProgressIndicator(color: _accentColor));
           }
 
           if (snapshot.hasError) {
@@ -483,7 +479,7 @@ class _ArenaScheduleView extends StatelessWidget {
                         icon: const Icon(Icons.refresh),
                         label: const Text('Pull down or tap to retry'),
                         style: ElevatedButton.styleFrom(
-                            backgroundColor: themeColor,
+                            backgroundColor: _accentColor,
                             foregroundColor: Colors.white),
                       ),
                     ],
@@ -513,28 +509,25 @@ class _ArenaScheduleView extends StatelessWidget {
             );
           }
 
-          // Sort: unscored ascending first, scored ascending at the bottom
           final entries = List<ScheduleEntry>.from(snapshot.data!);
           entries.sort((a, b) {
-            final aScored = scoredMatchIds.contains(a.matchId) ? 1 : 0;
-            final bScored = scoredMatchIds.contains(b.matchId) ? 1 : 0;
+            final aScored = scoredMatchIds.contains('${a.matchId}_${a.teamId}') ? 1 : 0;
+            final bScored = scoredMatchIds.contains('${b.matchId}_${b.teamId}') ? 1 : 0;
             if (aScored != bScored) return aScored.compareTo(bScored);
             return a.matchNumber.compareTo(b.matchNumber);
           });
 
           return ListView.builder(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             itemCount: entries.length,
             itemBuilder: (context, index) {
               final entry = entries[index];
-              final isScored = scoredMatchIds.contains(entry.matchId);
+              final isScored = scoredMatchIds.contains('${entry.matchId}_${entry.teamId}');
               return _MatchCard(
-                entry:     entry,
-                cardColor: themeColor,
-                isScored:  isScored,
-                onTap:     isScored ? null : () => onOpenScoring(entry),
+                entry:    entry,
+                isScored: isScored,
+                onTap:    isScored ? null : () => onOpenScoring(entry),
               );
             },
           );
@@ -549,13 +542,11 @@ class _ArenaScheduleView extends StatelessWidget {
 // ─────────────────────────────────────────────
 class _MatchCard extends StatelessWidget {
   final ScheduleEntry entry;
-  final Color cardColor;
   final bool isScored;
   final VoidCallback? onTap;
 
   const _MatchCard({
     required this.entry,
-    required this.cardColor,
     required this.isScored,
     required this.onTap,
   });
@@ -569,17 +560,17 @@ class _MatchCard extends StatelessWidget {
         child: Container(
           margin: const EdgeInsets.only(bottom: 10),
           decoration: BoxDecoration(
-            color: cardColor,
+            color: _accentColor,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Column(
             children: [
-              // Header row
+              // Header row — darker overlay left as-is
               Container(
                 padding:
                     const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.1),
+                  color: Colors.black.withOpacity(0.2),
                   borderRadius: const BorderRadius.only(
                       topLeft: Radius.circular(8),
                       topRight: Radius.circular(8)),
@@ -589,7 +580,6 @@ class _MatchCard extends StatelessWidget {
                     const SizedBox(width: 60,  child: Text('MATCH:',    style: _labelStyle)),
                     const SizedBox(width: 100, child: Text('TEAM ID:',  style: _labelStyle)),
                     const Expanded(            child: Text('TEAM NAME:', style: _labelStyle)),
-                    // "SCORED" badge — only visible when submitted
                     if (isScored)
                       Container(
                         padding: const EdgeInsets.symmetric(

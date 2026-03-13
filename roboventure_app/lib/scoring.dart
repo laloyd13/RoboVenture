@@ -14,7 +14,7 @@ import 'package:http/http.dart' as http;
 // ─────────────────────────────────────────────
 // API CONFIG  –  matches your existing roboventure_api pattern
 // ─────────────────────────────────────────────
-const String _baseUrl = 'http://175.20.0.50/roboventure_api'; // <-- replace 'ip' with your server IP
+const String _baseUrl = 'http://175.20.0.60/roboventure_api'; // <-- replace 'ip' with your server IP
 
 // ─────────────────────────────────────────────
 // DATA MODELS
@@ -239,18 +239,25 @@ class SignaturePadState extends State<SignaturePad> {
           ],
         ),
         const SizedBox(height: 5),
-        GestureDetector(
-          onPanUpdate: _handlePanUpdate,
-          onPanEnd: (details) => widget.delegate.addPoint(null),
-          child: Container(
-            key: _paintKey,
-            color: Colors.white,
-            height: 120,
-            width: double.infinity,
-            child: ClipRect(
-              child: CustomPaint(
-                painter: SignaturePainter(
-                    points: List.from(widget.delegate.points)),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: GestureDetector(
+            onPanUpdate: _handlePanUpdate,
+            onPanEnd: (details) => widget.delegate.addPoint(null),
+            child: Container(
+              key: _paintKey,
+              height: 120,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: CustomPaint(
+                  painter: SignaturePainter(
+                      points: List.from(widget.delegate.points)),
+                ),
               ),
             ),
           ),
@@ -292,7 +299,7 @@ class SaveDelegate {
 // ─────────────────────────────────────────────
 // COLOR PALETTE
 // ─────────────────────────────────────────────
-const Color primaryPurple = Color(0xFF7B2FBE);
+const Color primaryPurple = Color(0xFF7D58B3);
 const Color badgePurple = Color(0xFFC8BFE1);
 const Color accentYellow = Color(0xFFF9D949);
 const Color missionBlue = Color(0xFF8BA3C7);
@@ -304,7 +311,7 @@ const Color penaltyRed = Color(0xFFB35D65);
 const Color bgGrey = Color(0xFFF0F0F0);
 const Color inputGrey = Color(0xFFE8E8E8);
 const Color saveGreen = Color(0xFF5E975E);
-const Color confirmPurple = Color(0xFF4A2E83);
+const Color confirmPurple = Color(0xFF3B1F6E);
 const Color pauseRed = Color(0xFFB35D65);
 const Color startGreen = Color(0xFF5E975E);
 const Color resetPurple = Color(0xFF79569A);
@@ -496,9 +503,13 @@ class _ScoringPageState extends State<ScoringPage> {
       return;
     }
 
+    // Capture root navigator before async gap so pops target the correct
+    // route stack regardless of which BuildContext (bottom sheet) called us.
+    final rootNav = Navigator.of(context, rootNavigator: true);
+
     // Show loading indicator
     showDialog(
-      context: localContext,
+      context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
@@ -519,18 +530,18 @@ class _ScoringPageState extends State<ScoringPage> {
       }(),
     );
 
-    if (!localContext.mounted) return;
-    Navigator.of(localContext).pop(); // dismiss loading
+    if (!mounted) return;
+    rootNav.pop(); // dismiss loading dialog
 
     if (success) {
-      ScaffoldMessenger.of(localContext).showSnackBar(const SnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Score submitted successfully!'),
         backgroundColor: saveGreen,
       ));
-      Navigator.of(localContext).pop(); // close signature popup
-      Navigator.of(localContext).pop(); // go back to previous screen
+      rootNav.pop(); // close signature bottom sheet
+      rootNav.pop(); // go back to qualification schedule screen
     } else {
-      ScaffoldMessenger.of(localContext).showSnackBar(const SnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Submission failed. Please try again.'),
         backgroundColor: penaltyRed,
       ));
@@ -563,13 +574,27 @@ class _ScoringPageState extends State<ScoringPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Align(
-                      alignment: Alignment.topRight,
-                      child: IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white),
-                        onPressed: () => Navigator.pop(ctx),
-                      ),
+                    // ── Title + close button, level on same row ──
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const SizedBox(width: 48),
+                        const Text(
+                          "SINGLE MATCH SUMMARY",
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              fontStyle: FontStyle.italic),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
                     ),
+                    const Divider(color: Colors.white24, thickness: 1, height: 1),
+                    const SizedBox(height: 12),
                     RepaintBoundary(
                       key: _globalKey,
                       child: Container(
@@ -578,15 +603,6 @@ class _ScoringPageState extends State<ScoringPage> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Text(
-                              "SINGLE MATCH SUMMARY",
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w900,
-                                  fontStyle: FontStyle.italic),
-                            ),
-                            const SizedBox(height: 5),
                             Text(
                               _team?.teamName ?? '—',
                               style: const TextStyle(

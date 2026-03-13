@@ -17,7 +17,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<List<dynamic>>? _categoriesFuture;
 
   final Map<String, dynamic> _categoryThemes = {
-    'Aspiring Makers': {'icon': Icons.build_circle_outlined, 'color': const Color(0xFF7B2FBE)},
+    'Aspiring Makers': {'icon': Icons.build_circle_outlined, 'color': const Color(0xFF9B84D1)},
     'Emerging Innovators': {'icon': Icons.lightbulb_outline, 'color': const Color(0xFF3498DB)},
     'Line Tracing': {'icon': Icons.route_outlined, 'color': const Color(0xFFE67E22)},
     'Navigation': {'icon': Icons.explore_outlined, 'color': const Color(0xFF27AE60)},
@@ -30,16 +30,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _categoriesFuture = _fetchCategories();
   }
 
-// --- FETCH CATEGORIES FROM API ---
   Future<List<dynamic>> _fetchCategories() async {
-    final url = Uri.parse('http://175.20.0.50/roboventure_api/get_categories.php');
-    
+    final url = Uri.parse('http://175.20.0.60/roboventure_api/get_categories.php');
     try {
       final response = await http.get(url);
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
-
-        // Sort: active first, then inactive — each group sorted A→Z by category_type
         data.sort((a, b) {
           final aActive = (a['status'] == 'active') ? 0 : 1;
           final bActive = (b['status'] == 'active') ? 0 : 1;
@@ -48,7 +44,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           final bName = (b['category_type'] ?? '').toString().toLowerCase();
           return aName.compareTo(bName);
         });
-
         return data;
       } else {
         throw Exception('Server error: ${response.statusCode}');
@@ -80,9 +75,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   if (_categoriesFuture == null) {
                     return const Center(child: CircularProgressIndicator());
                   }
-
                   if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator(color: Color(0xFF7B2FBE)));
+                    return const Center(child: CircularProgressIndicator(color: Color(0xFF9B84D1)));
                   } else if (snapshot.hasError) {
                     return _buildErrorState(snapshot.error.toString());
                   } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
@@ -93,7 +87,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                   return RefreshIndicator(
                     onRefresh: _handleRefresh,
-                    color: const Color(0xFF7B2FBE),
+                    color: const Color(0xFF7B56B3),
                     backgroundColor: Colors.white,
                     child: SingleChildScrollView(
                       physics: const AlwaysScrollableScrollPhysics(),
@@ -179,9 +173,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildHeader() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(colors: [Color(0xFF5B2D8E), Color(0xFF8B5BBE)]),
-      ),
+      color: const Color(0xFF7D58B3),
       child: Row(
         children: [
           const Column(
@@ -206,7 +198,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [Color(0xFF7B2FBE), Color(0xFF9B59B6)]),
+        color: const Color(0xFF7D58B3),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
@@ -249,15 +241,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _sectionLabel(String text, {int? count}) {
     return Row(
       children: [
-        Container(width: 3, height: 16, decoration: BoxDecoration(color: const Color(0xFF7B2FBE), borderRadius: BorderRadius.circular(2))),
+        Container(width: 3, height: 16, decoration: BoxDecoration(color: const Color(0xFF7B56B3), borderRadius: BorderRadius.circular(2))),
         const SizedBox(width: 8),
-        Text(text, style: const TextStyle(color: Color(0xFF5B2D8E), fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+        Text(text, style: const TextStyle(color: Color(0xFF7B56B3), fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
         if (count != null) ...[
           const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-            decoration: BoxDecoration(color: const Color(0xFF7B2FBE).withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
-            child: Text('$count', style: const TextStyle(color: Color(0xFF7B2FBE), fontSize: 10, fontWeight: FontWeight.bold)),
+            decoration: BoxDecoration(color: const Color(0xFF7B56B3).withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
+            child: Text('$count', style: const TextStyle(color: Color(0xFF7B56B3), fontSize: 10, fontWeight: FontWeight.bold)),
           ),
         ],
       ],
@@ -271,8 +263,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: const Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _LogoBadge(label: "Makeblock", color: Colors.orange),
-          _LogoBadge(label: "CREOTEC", color: Colors.blue),
+          _LogoBadge(imagePath: 'assets/makeblock.png'),
+          _LogoBadge(imagePath: 'assets/CreoLogo.png'),
         ],
       ),
     );
@@ -321,10 +313,10 @@ class _CompetitionCardState extends State<_CompetitionCard> {
             color: widget.isLocked ? Colors.white.withOpacity(0.7) : Colors.white,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: widget.isLocked 
-                  ? widget.accentColor.withOpacity(0.2) 
-                  : widget.accentColor.withOpacity(0.8), 
-              width: 2.0, 
+              color: widget.isLocked
+                  ? widget.accentColor.withOpacity(0.2)
+                  : widget.accentColor.withOpacity(0.8),
+              width: 2.0,
             ),
             boxShadow: [
               if (!widget.isLocked)
@@ -340,8 +332,8 @@ class _CompetitionCardState extends State<_CompetitionCard> {
               Container(
                 width: 48, height: 48,
                 decoration: BoxDecoration(
-                  color: widget.accentColor.withOpacity(widget.isLocked ? 0.1 : 0.15), 
-                  borderRadius: BorderRadius.circular(12)
+                  color: widget.accentColor.withOpacity(widget.isLocked ? 0.1 : 0.15),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(widget.icon, color: widget.accentColor.withOpacity(widget.isLocked ? 0.4 : 1.0), size: 24),
               ),
@@ -379,9 +371,9 @@ class _CompetitionCardState extends State<_CompetitionCard> {
                   ),
                   const SizedBox(height: 8),
                   Icon(
-                    widget.isLocked ? Icons.lock_outline : Icons.chevron_right, 
-                    color: widget.isLocked ? Colors.grey.withOpacity(0.4) : widget.accentColor, 
-                    size: 18
+                    widget.isLocked ? Icons.lock_outline : Icons.chevron_right,
+                    color: widget.isLocked ? Colors.grey.withOpacity(0.4) : widget.accentColor,
+                    size: 18,
                   ),
                 ],
               ),
@@ -394,16 +386,30 @@ class _CompetitionCardState extends State<_CompetitionCard> {
 }
 
 class _LogoBadge extends StatelessWidget {
-  final String label;
-  final Color color;
-  const _LogoBadge({required this.label, required this.color});
+  final String imagePath;
+  const _LogoBadge({required this.imagePath});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: const Color(0xFFF4F0FF), borderRadius: BorderRadius.circular(4)),
-      child: Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F0FF),
+        borderRadius: BorderRadius.circular(6),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Image.asset(
+        imagePath,
+        height: 20,
+        width: 80,
+        fit: BoxFit.contain,
+      ),
     );
   }
 }
