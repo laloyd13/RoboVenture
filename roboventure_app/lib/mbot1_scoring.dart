@@ -314,13 +314,13 @@ const Color resetPurple = Color(0xFF79569A);
 // ─────────────────────────────────────────────
 // SCORING PAGE
 // ─────────────────────────────────────────────
-class ScoringPage extends StatefulWidget {
+class Mbot1ScoringPage extends StatefulWidget {
 
   final int matchId;
   final int teamId;
   final int refereeId;
 
-  const ScoringPage({
+  const Mbot1ScoringPage({
     super.key,
     required this.matchId,
     required this.teamId,
@@ -328,10 +328,10 @@ class ScoringPage extends StatefulWidget {
   });
 
   @override
-  State<ScoringPage> createState() => _ScoringPageState();
+  State<Mbot1ScoringPage> createState() => _Mbot1ScoringPageState();
 }
 
-class _ScoringPageState extends State<ScoringPage> {
+class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
   // ── Signature delegates ──────────────────────
   final SaveDelegate _captainDelegate = SaveDelegate();
   final SaveDelegate _refereeDelegate = SaveDelegate();

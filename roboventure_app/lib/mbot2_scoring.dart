@@ -15,20 +15,20 @@ import 'api_config.dart';
 // ─────────────────────────────────────────────
 // DATA MODELS
 // ─────────────────────────────────────────────
-class SoccerMatchInfo {
+class MatchInfo {
   final int matchId;
   final int scheduleId;
   final String scheduleStart;
   final String scheduleEnd;
 
-  SoccerMatchInfo({
+  MatchInfo({
     required this.matchId,
     required this.scheduleId,
     required this.scheduleStart,
     required this.scheduleEnd,
   });
 
-  factory SoccerMatchInfo.fromJson(Map<String, dynamic> j) => SoccerMatchInfo(
+  factory MatchInfo.fromJson(Map<String, dynamic> j) => MatchInfo(
           matchId:       int.tryParse(j['match_id'].toString()) ?? 0,
           scheduleId:    int.tryParse(j['schedule_id'].toString()) ?? 0,
           scheduleStart: j['schedule_start'] ?? '',
@@ -36,51 +36,51 @@ class SoccerMatchInfo {
       );
 }
 
-  class SoccerRefereeInfo {
+  class RefereeInfo {
     final int refereeId;
     final String refereeName;
 
-    SoccerRefereeInfo({required this.refereeId, required this.refereeName});
+    RefereeInfo({required this.refereeId, required this.refereeName});
 
-    factory SoccerRefereeInfo.fromJson(Map<String, dynamic> j) => SoccerRefereeInfo(
+    factory RefereeInfo.fromJson(Map<String, dynamic> j) => RefereeInfo(
       refereeId:   int.tryParse(j['referee_id'].toString()) ?? 0,
       refereeName: j['referee_name'] ?? '',
     );
   }
 
-class SoccerTeamInfo {
+class TeamInfo {
   final int teamId;
   final String teamName;
   final int categoryId;
 
-  SoccerTeamInfo({required this.teamId, required this.teamName, required this.categoryId});
+  TeamInfo({required this.teamId, required this.teamName, required this.categoryId});
 
-  factory SoccerTeamInfo.fromJson(Map<String, dynamic> j) => SoccerTeamInfo(
+  factory TeamInfo.fromJson(Map<String, dynamic> j) => TeamInfo(
     teamId:     int.tryParse(j['team_id'].toString()) ?? 0,
     teamName:   j['team_name'] ?? '',
     categoryId: int.tryParse(j['category_id'].toString()) ?? 0,
   );
 }
 
-class SoccerCategoryInfo {
+class CategoryInfo {
   final int categoryId;
   final String categoryType;
 
-  SoccerCategoryInfo({required this.categoryId, required this.categoryType});
+  CategoryInfo({required this.categoryId, required this.categoryType});
 
-  factory SoccerCategoryInfo.fromJson(Map<String, dynamic> j) => SoccerCategoryInfo(
+  factory CategoryInfo.fromJson(Map<String, dynamic> j) => CategoryInfo(
     categoryId:   int.tryParse(j['category_id'].toString()) ?? 0,
     categoryType: j['category_type'] ?? '',
   );
 }
 
-class SoccerRoundInfo {
+class RoundInfo {
   final int roundId;
   final String roundType;
 
-  SoccerRoundInfo({required this.roundId, required this.roundType});
+  RoundInfo({required this.roundId, required this.roundType});
 
-  factory SoccerRoundInfo.fromJson(Map<String, dynamic> j) => SoccerRoundInfo(
+  factory RoundInfo.fromJson(Map<String, dynamic> j) => RoundInfo(
     roundId:   int.tryParse(j['round_id'].toString()) ?? 0,
     roundType: j['round_type'] ?? '',
   );
@@ -89,7 +89,7 @@ class SoccerRoundInfo {
 // ─────────────────────────────────────────────
 // API SERVICE
 // ─────────────────────────────────────────────
-class SoccerScoringApiService {
+class ScoringApiService {
 
   static Future<http.Response> _get(String action, [Map<String, String>? params]) async {
     var queryParams = 'action=$action';
@@ -104,48 +104,48 @@ class SoccerScoringApiService {
   }
 
   // GET match joined with schedule
-  static Future<SoccerMatchInfo?> fetchMatch(int matchId) async {
+  static Future<MatchInfo?> fetchMatch(int matchId) async {
     final response = await _get('get_match', {'match_id': '$matchId'});
     if (response.statusCode == 200) {
-      return SoccerMatchInfo.fromJson(json.decode(response.body));
+      return MatchInfo.fromJson(json.decode(response.body));
     }
     throw Exception('get_match failed [${response.statusCode}]: ${response.body}');
   }
 
   // GET referee by ID
-  static Future<SoccerRefereeInfo?> fetchReferee(int refereeId) async {
+  static Future<RefereeInfo?> fetchReferee(int refereeId) async {
     final response = await _get('get_referee', {'referee_id': '$refereeId'});
     if (response.statusCode == 200) {
-      return SoccerRefereeInfo.fromJson(json.decode(response.body));
+      return RefereeInfo.fromJson(json.decode(response.body));
     }
     throw Exception('get_referee failed [${response.statusCode}]: ${response.body}');
   }
 
   // GET team by ID
-  static Future<SoccerTeamInfo?> fetchTeam(int teamId) async {
+  static Future<TeamInfo?> fetchTeam(int teamId) async {
     final response = await _get('get_team', {'team_id': '$teamId'});
     if (response.statusCode == 200) {
-      return SoccerTeamInfo.fromJson(json.decode(response.body));
+      return TeamInfo.fromJson(json.decode(response.body));
     }
     throw Exception('get_team failed [${response.statusCode}]: ${response.body}');
   }
 
   // GET all active categories
-  static Future<List<SoccerCategoryInfo>> fetchCategories() async {
+  static Future<List<CategoryInfo>> fetchCategories() async {
     final response = await _get('get_categories');
     if (response.statusCode == 200) {
       final List<dynamic> data = json.decode(response.body);
-      return data.map((e) => SoccerCategoryInfo.fromJson(e)).toList();
+      return data.map((e) => CategoryInfo.fromJson(e)).toList();
     }
     throw Exception('get_categories failed [${response.statusCode}]: ${response.body}');
   }
 
   // GET all rounds
-  static Future<List<SoccerRoundInfo>> fetchRounds() async {
+  static Future<List<RoundInfo>> fetchRounds() async {
     final response = await _get('get_rounds');
     if (response.statusCode == 200) {
       final List<dynamic> data = json.decode(response.body);
-      return data.map((e) => SoccerRoundInfo.fromJson(e)).toList();
+      return data.map((e) => RoundInfo.fromJson(e)).toList();
     }
     throw Exception('get_rounds failed [${response.statusCode}]: ${response.body}');
   }
@@ -156,10 +156,9 @@ class SoccerScoringApiService {
     required int roundId,
     required int teamId,
     required int refereeId,
-    required int teamAScore,
-    required int teamBScore,
-    required int teamAFouls,
-    required int teamBFouls,
+    required int independentScore,
+    required int violation,
+    required int totalScore,
     required String totalDuration,
   }) async {
     final url = Uri.parse('${ApiConfig.scoring}?action=submit_score');
@@ -168,15 +167,15 @@ class SoccerScoringApiService {
       url,
       headers: {'Content-Type': 'application/json'},
       body: json.encode({
-        'match_id':               matchId,
-        'round_id':               roundId,
-        'team_id':                teamId,
-        'referee_id':             refereeId,
-        'score_independentscore': teamAScore,
-        'score_violation':        teamAFouls + teamBFouls,
-        'score_totalscore':       teamBScore,
-        'score_totalduration':    totalDuration,
-        'score_isapproved':       0,
+        'match_id': matchId,
+        'round_id': roundId,
+        'team_id': teamId,
+        'referee_id': refereeId,
+        'score_independentscore': independentScore,
+        'score_violation': violation,
+        'score_totalscore': totalScore,
+        'score_totalduration': totalDuration,
+        'score_isapproved': 0,
       }),
     ).timeout(const Duration(seconds: 10));
     debugPrint('[API] submit_score ${response.statusCode}: ${response.body}');
@@ -187,17 +186,17 @@ class SoccerScoringApiService {
 // ─────────────────────────────────────────────
 // SIGNATURE PAD
 // ─────────────────────────────────────────────
-class SoccerSignaturePad extends StatefulWidget {
-  final SoccerSaveDelegate delegate;
+class SignaturePad extends StatefulWidget {
+  final SaveDelegate delegate;
   final String label;
 
-  const SoccerSignaturePad({super.key, required this.delegate, required this.label});
+  const SignaturePad({super.key, required this.delegate, required this.label});
 
   @override
-  SoccerSignaturePadState createState() => SoccerSignaturePadState();
+  SignaturePadState createState() => SignaturePadState();
 }
 
-class SoccerSignaturePadState extends State<SoccerSignaturePad> {
+class SignaturePadState extends State<SignaturePad> {
   final GlobalKey _paintKey = GlobalKey();
 
   void _handlePanUpdate(DragUpdateDetails details) {
@@ -251,7 +250,7 @@ class SoccerSignaturePadState extends State<SoccerSignaturePad> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: CustomPaint(
-                  painter: SoccerSignaturePainter(
+                  painter: SignaturePainter(
                       points: List.from(widget.delegate.points)),
                 ),
               ),
@@ -263,8 +262,8 @@ class SoccerSignaturePadState extends State<SoccerSignaturePad> {
   }
 }
 
-class SoccerSignaturePainter extends CustomPainter {
-  SoccerSignaturePainter({required this.points});
+class SignaturePainter extends CustomPainter {
+  SignaturePainter({required this.points});
   final List<Offset?> points;
 
   @override
@@ -282,11 +281,11 @@ class SoccerSignaturePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(SoccerSignaturePainter oldDelegate) =>
+  bool shouldRepaint(SignaturePainter oldDelegate) =>
       oldDelegate.points != points;
 }
 
-class SoccerSaveDelegate {
+class SaveDelegate {
   List<Offset?> points = <Offset?>[];
   void addPoint(Offset? point) => points.add(point);
   void clear() => points.clear();
@@ -295,33 +294,33 @@ class SoccerSaveDelegate {
 // ─────────────────────────────────────────────
 // COLOR PALETTE
 // ─────────────────────────────────────────────
-const Color soccerPrimaryPurple = Color(0xFF7D58B3);
-const Color soccerBadgePurple = Color(0xFFC8BFE1);
-const Color soccerAccentYellow = Color(0xFFF9D949);
-const Color soccerMissionBlue = Color(0xFF8BA3C7);
-const Color soccerMissionGreen = Color(0xFF76A379);
-const Color soccerMissionAmber = Color(0xFFC7A38B);
-const Color soccerMissionPurple = Color(0xFF8789C0);
-const Color soccerMissionLavender = Color(0xFF9B8CB8);
-const Color soccerPenaltyRed = Color(0xFFB35D65);
-const Color soccerBgGrey = Color(0xFFF0F0F0);
-const Color soccerInputGrey = Color(0xFFE8E8E8);
-const Color soccerSaveGreen = Color(0xFF5E975E);
-const Color soccerConfirmPurple = Color(0xFF3B1F6E);
-const Color soccerPauseRed = Color(0xFFB35D65);
-const Color soccerStartGreen = Color(0xFF5E975E);
-const Color soccerResetPurple = Color(0xFF79569A);
+const Color primaryPurple = Color(0xFF7D58B3);
+const Color badgePurple = Color(0xFFC8BFE1);
+const Color accentYellow = Color(0xFFF9D949);
+const Color missionBlue = Color(0xFF8BA3C7);
+const Color missionGreen = Color(0xFF76A379);
+const Color missionAmber = Color(0xFFC7A38B);
+const Color missionPurple = Color(0xFF8789C0);
+const Color missionLavender = Color(0xFF9B8CB8);
+const Color penaltyRed = Color(0xFFB35D65);
+const Color bgGrey = Color(0xFFF0F0F0);
+const Color inputGrey = Color(0xFFE8E8E8);
+const Color saveGreen = Color(0xFF5E975E);
+const Color confirmPurple = Color(0xFF3B1F6E);
+const Color pauseRed = Color(0xFFB35D65);
+const Color startGreen = Color(0xFF5E975E);
+const Color resetPurple = Color(0xFF79569A);
 
 // ─────────────────────────────────────────────
 // SCORING PAGE
 // ─────────────────────────────────────────────
-class SoccerScoringPage extends StatefulWidget {
+class Mbot2ScoringPage extends StatefulWidget {
 
   final int matchId;
   final int teamId;
   final int refereeId;
 
-  const SoccerScoringPage({
+  const Mbot2ScoringPage({
     super.key,
     required this.matchId,
     required this.teamId,
@@ -329,25 +328,34 @@ class SoccerScoringPage extends StatefulWidget {
   });
 
   @override
-  State<SoccerScoringPage> createState() => _SoccerScoringPageState();
+  State<Mbot2ScoringPage> createState() => _Mbot2ScoringPageState();
 }
 
-class _SoccerScoringPageState extends State<SoccerScoringPage> {
+class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
   // ── Signature delegates ──────────────────────
-  final SoccerSaveDelegate _captainADelegate = SoccerSaveDelegate();
-  final SoccerSaveDelegate _refereeDelegate  = SoccerSaveDelegate();
+  final SaveDelegate _captainDelegate = SaveDelegate();
+  final SaveDelegate _refereeDelegate = SaveDelegate();
   final GlobalKey _globalKey = GlobalKey();
 
-  // ── Soccer scores ─────────────
-  int teamAScore = 0;
-  int teamAFouls = 0;
-  int teamBScore = 0;
-  int teamBFouls = 0;
+  // ── Mission counters ─────────────────────────
+  int m01Qty = 0, m02Qty = 0, m03Qty = 0, m04Qty = 0, m05Qty = 0,
+      violations = 0;
+  final int m01Points = 10, m02Points = 10, m03Points = 10, m04Points = 10,
+      m05Points = 10;
 
-    // ── Timer state ──────────────────────────────
+  int get independentScore =>
+      (m01Qty * m01Points) +
+      (m02Qty * m02Points) +
+      (m03Qty * m03Points) +
+      (m04Qty * m04Points) +
+      (m05Qty * m05Points);
+  int get violationPenalty => violations * 10;
+  int get totalScore => independentScore - violationPenalty;
+
+  // ── Timer state ──────────────────────────────
   bool _timerRunning = false;
-  int _remainingSeconds = 300; // fixed 5:00 minutes
-  final int _totalSeconds = 300;
+  int _remainingSeconds = 240; // fixed 4:00 minutes
+  final int _totalSeconds = 240;
   Timer? _countdownTimer;
 
   void _initTimer() {
@@ -379,15 +387,15 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
   bool _loading = true;
   String? _errorMsg;
 
-  SoccerMatchInfo? _match;
-  SoccerRefereeInfo? _referee;
-  SoccerTeamInfo? _team;
+  MatchInfo? _match;
+  RefereeInfo? _referee;
+  TeamInfo? _team;
 
-  List<SoccerCategoryInfo> _categories = [];
-  SoccerCategoryInfo? _selectedCategory;
+  List<CategoryInfo> _categories = [];
+  CategoryInfo? _selectedCategory;
 
-  List<SoccerRoundInfo> _rounds = [];
-  SoccerRoundInfo? _selectedRound;
+  List<RoundInfo> _rounds = [];
+  RoundInfo? _selectedRound;
 
   // ─────────────────────────────────────────────
   @override
@@ -406,13 +414,13 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
     setState(() { _loading = true; _errorMsg = null; });
 
     try {
-      final match      = await SoccerScoringApiService.fetchMatch(widget.matchId);
-      final referee    = await SoccerScoringApiService.fetchReferee(widget.refereeId);
-      final team       = await SoccerScoringApiService.fetchTeam(widget.teamId);
-      final categories = await SoccerScoringApiService.fetchCategories();
-      final rounds     = await SoccerScoringApiService.fetchRounds();
+      final match      = await ScoringApiService.fetchMatch(widget.matchId);
+      final referee    = await ScoringApiService.fetchReferee(widget.refereeId);
+      final team       = await ScoringApiService.fetchTeam(widget.teamId);
+      final categories = await ScoringApiService.fetchCategories();
+      final rounds     = await ScoringApiService.fetchRounds();
 
-      SoccerCategoryInfo? selCategory;
+      CategoryInfo? selCategory;
       if (team != null && categories.isNotEmpty) {
         selCategory = categories.firstWhere(
           (c) => c.categoryId == team.categoryId,
@@ -432,7 +440,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
       });
       _initTimer();
     } catch (e) {
-      debugPrint('[SoccerScoringPage] _fetchAllData error: $e');
+      debugPrint('[ScoringPage] _fetchAllData error: $e');
       setState(() {
         _errorMsg = e.toString();
         _loading  = false;
@@ -467,7 +475,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
       if (!localContext.mounted) return;
       ScaffoldMessenger.of(localContext).showSnackBar(const SnackBar(
         content: Text("Match summary saved as JPG!"),
-        backgroundColor: soccerSaveGreen,
+        backgroundColor: saveGreen,
         duration: Duration(seconds: 2),
       ));
     } catch (e) {
@@ -497,20 +505,20 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
 
-    final elapsed = _totalSeconds - _remainingSeconds;
-    final em = (elapsed ~/ 60).toString().padLeft(2, '0');
-    final es = (elapsed % 60).toString().padLeft(2, '0');
-
-    final success = await SoccerScoringApiService.submitScore(
-      matchId:       widget.matchId,
-      roundId:       _selectedRound!.roundId,
-      teamId:        widget.teamId,
-      refereeId:     widget.refereeId,
-      teamAScore:    teamAScore,
-      teamBScore:    teamBScore,
-      teamAFouls:    teamAFouls,
-      teamBFouls:    teamBFouls,
-      totalDuration: '$em:$es',
+    final success = await ScoringApiService.submitScore(
+      matchId: widget.matchId,
+      roundId: _selectedRound!.roundId,
+      teamId: widget.teamId,
+      refereeId: widget.refereeId,
+      independentScore: independentScore,
+      violation: violations,
+      totalScore: totalScore,
+      totalDuration: () {
+        final elapsed = _totalSeconds - _remainingSeconds;
+        final m = (elapsed ~/ 60).toString().padLeft(2, '0');
+        final s = (elapsed % 60).toString().padLeft(2, '0');
+        return '$m:$s';
+      }(),
     );
 
     if (!mounted) return;
@@ -519,14 +527,14 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
     if (success) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Score submitted successfully!'),
-        backgroundColor: soccerSaveGreen,
+        backgroundColor: saveGreen,
       ));
       rootNav.pop();
       rootNav.pop();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Submission failed. Please try again.'),
-        backgroundColor: soccerPenaltyRed,
+        backgroundColor: penaltyRed,
       ));
     }
   }
@@ -549,7 +557,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
                 decoration: const BoxDecoration(
-                  color: soccerPrimaryPurple,
+                  color: primaryPurple,
                   borderRadius: BorderRadius.only(
                       topLeft: Radius.circular(25),
                       topRight: Radius.circular(25)),
@@ -581,7 +589,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                       key: _globalKey,
                       child: Container(
                         padding: const EdgeInsets.all(10),
-                        color: soccerPrimaryPurple,
+                        color: primaryPurple,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -601,8 +609,10 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                               children: [
-                                _buildSummaryLabel('${_match?.matchId ?? '—'}', 'MATCH'),
-                                _buildSummaryLabel('$teamAScore - $teamBScore', 'SCORE'),
+                                _buildSummaryLabel(
+                                    '${_match?.matchId ?? '—'}', 'MATCH'),
+                                _buildSummaryLabel(
+                                    '$totalScore', 'TOTAL SCORE'),
                                 _buildSummaryLabel(() {
                                   final elapsed = _totalSeconds - _remainingSeconds;
                                   final m = (elapsed ~/ 60).toString().padLeft(2, '0');
@@ -612,11 +622,11 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                               ],
                             ),
                             const SizedBox(height: 15),
-                            SoccerSignaturePad(
-                                delegate: _captainADelegate,
-                                label: "CAPTAIN A SIGNATURE"),
+                            SignaturePad(
+                                delegate: _captainDelegate,
+                                label: "CAPTAIN SIGNATURE"),
                             const SizedBox(height: 10),
-                            SoccerSignaturePad(
+                            SignaturePad(
                                 delegate: _refereeDelegate,
                                 label: "REFEREE SIGNATURE"),
                             const SizedBox(height: 15),
@@ -639,7 +649,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                           Expanded(
                             child: _buildActionBtn(
                               "SAVE",
-                              soccerSaveGreen,
+                              saveGreen,
                               fontSize: 18,
                               onTap: () => _saveToGallery(localCtx),
                             ),
@@ -648,7 +658,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                           Expanded(
                             child: _buildActionBtn(
                               "SUBMIT",
-                              soccerConfirmPurple,
+                              confirmPurple,
                               fontSize: 18,
                               onTap: () => _submitScore(localCtx),
                             ),
@@ -673,16 +683,16 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(
-        backgroundColor: soccerBgGrey,
-        body: Center(child: CircularProgressIndicator(color: soccerPrimaryPurple)),
+        backgroundColor: bgGrey,
+        body: Center(child: CircularProgressIndicator(color: primaryPurple)),
       );
     }
 
     if (_errorMsg != null) {
       return Scaffold(
-        backgroundColor: soccerBgGrey,
+        backgroundColor: bgGrey,
         appBar: AppBar(
-          backgroundColor: soccerPrimaryPurple,
+          backgroundColor: primaryPurple,
           automaticallyImplyLeading: false,
           title: GestureDetector(
             onTap: () => Navigator.pop(context),
@@ -701,11 +711,11 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.error_outline, color: soccerPenaltyRed, size: 48),
+              const Icon(Icons.error_outline, color: penaltyRed, size: 48),
               const SizedBox(height: 16),
               const Text(
                 'Failed to Load Data',
-                style: TextStyle(color: soccerPenaltyRed, fontSize: 18, fontWeight: FontWeight.bold),
+                style: TextStyle(color: penaltyRed, fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 12),
               // Scrollable error box so long messages are fully readable
@@ -714,7 +724,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: soccerPenaltyRed.withOpacity(0.4)),
+                  border: Border.all(color: penaltyRed.withOpacity(0.4)),
                 ),
                 constraints: const BoxConstraints(maxHeight: 200),
                 child: SingleChildScrollView(
@@ -738,7 +748,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
               ),
               const SizedBox(height: 20),
               ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(backgroundColor: soccerPrimaryPurple),
+                style: ElevatedButton.styleFrom(backgroundColor: primaryPurple),
                 onPressed: _fetchAllData,
                 icon: const Icon(Icons.refresh, color: Colors.white),
                 label: const Text('Retry', style: TextStyle(color: Colors.white)),
@@ -750,14 +760,14 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
     }
 
     return Scaffold(
-      backgroundColor: soccerBgGrey,
+      backgroundColor: bgGrey,
       body: CustomScrollView(
         slivers: [
           // ── APP BAR ───────────────────────────
           SliverAppBar(
             pinned: true,
             elevation: 0,
-            backgroundColor: soccerPrimaryPurple,
+            backgroundColor: primaryPurple,
             automaticallyImplyLeading: false,
             title: GestureDetector(
               onTap: () => Navigator.pop(context),
@@ -771,7 +781,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                         color: Colors.white, shape: BoxShape.circle),
                     child: const Center(
                         child: Icon(Icons.arrow_back_ios_new_rounded,
-                            color: soccerPrimaryPurple, size: 12, fontWeight: FontWeight.bold)),
+                            color: primaryPurple, size: 12, fontWeight: FontWeight.bold)),
                   ),
                   const SizedBox(width: 8),
                   const Text("BACK",
@@ -818,14 +828,14 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
 
           SliverToBoxAdapter(
             child: CustomPaint(
-              painter: SoccerGeometricBackgroundPainter(),
+              painter: GeometricBackgroundPainter(),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
                   children: [
                     // ── HEADER ROW ─────────────────
                     Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Column(
                           children: [
@@ -840,7 +850,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                               height: 40,
                               alignment: Alignment.center,
                               decoration: BoxDecoration(
-                                  color: soccerBadgePurple,
+                                  color: badgePurple,
                                   borderRadius:
                                       BorderRadius.circular(10),
                                   border: Border.all(
@@ -858,13 +868,13 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                         const SizedBox(width: 15),
                         Expanded(
                           child: Padding(
-                            padding: const EdgeInsets.only(bottom: 5),
+                            padding: const EdgeInsets.only(top: 10),
                             child: Text(
                               '${_selectedCategory?.categoryType.toUpperCase() ?? 'ROBOVENTURE'} FORM',
                               style: const TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
-                                  color: soccerPrimaryPurple),
+                                  color: primaryPurple),
                             ),
                           ),
                         ),
@@ -940,36 +950,95 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                           _buildRoundDropdown(),
 
                           const SizedBox(height: 10),
-                          const Text("SCORING",
+                          const Text("AUTOMATIC MISSION",
                               style: TextStyle(
                                   color: Colors.grey,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 11)),
                           const Divider(height: 30),
 
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _buildTeamScoringColumn(
-                                  "TEAM A", teamAScore, teamAFouls,
-                                  (v) => setState(() => teamAScore = (teamAScore + v).clamp(0, 99)),
-                                  (v) => setState(() => teamAFouls = (teamAFouls + v).clamp(0, 99)),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: _buildTeamScoringColumn(
-                                  "TEAM B", teamBScore, teamBFouls,
-                                  (v) => setState(() => teamBScore = (teamBScore + v).clamp(0, 99)),
-                                  (v) => setState(() => teamBFouls = (teamBFouls + v).clamp(0, 99)),
-                                ),
-                              ),
-                            ],
-                          ),
+                          // ── MISSIONS ────────────────
+                          _buildMissionCard(
+                              "MISSION 1",
+                              m01Qty,
+                              m01Points,
+                              missionBlue,
+                              (val) =>
+                                  setState(() => m01Qty = val)),
+                          const SizedBox(height: 20),
+                          _buildMissionCard(
+                              "MISSION 2",
+                              m02Qty,
+                              m02Points,
+                              missionGreen.withOpacity(0.7),
+                              (val) =>
+                                  setState(() => m02Qty = val)),
+                          const SizedBox(height: 20),
+                          _buildMissionCard(
+                              "MISSION 3",
+                              m03Qty,
+                              m03Points,
+                              missionAmber.withOpacity(0.7),
+                              (val) =>
+                                  setState(() => m03Qty = val)),
+                          const SizedBox(height: 20),
+                          _buildMissionCard(
+                              "MISSION 4",
+                              m04Qty,
+                              m04Points,
+                              missionPurple.withOpacity(0.7),
+                              (val) =>
+                                  setState(() => m04Qty = val)),
                           const SizedBox(height: 30),
-                                                    _buildActionBtn(
+                          _buildMissionCard(
+                              "MISSION 5",
+                              m05Qty,
+                              m05Points,
+                              missionLavender.withOpacity(0.7),
+                              (val) =>
+                                  setState(() => m05Qty = val)),
+                          const SizedBox(height: 30),
+
+                          // ── PENALTY ──────────────────
+                          const Text("PENALTY",
+                              style: TextStyle(
+                                  color: Colors.grey,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11)),
+                          const Divider(height: 30),
+                          _buildMissionCard(
+                              "VIOLATION",
+                              violations,
+                              10,
+                              penaltyRed,
+                              (val) =>
+                                  setState(() => violations = val)),
+                          const SizedBox(height: 30),
+
+                          // ── SCORE SUMMARY ────────────
+                          const Text("SINGLE MATCH SCORE",
+                              style: TextStyle(
+                                  color: Colors.grey,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11)),
+                          const SizedBox(height: 20),
+                          _buildScoreRow(
+                              "Independent Score", "$independentScore"),
+                          _buildScoreRow(
+                              "Violation", "-$violationPenalty"),
+                          _buildScoreRow(
+                              "Total Score", "$totalScore"),
+                          _buildScoreRow(
+                              "Competition Time", () {
+                            final elapsed = _totalSeconds - _remainingSeconds;
+                            final m = (elapsed ~/ 60).toString().padLeft(2, '0');
+                            final s = (elapsed % 60).toString().padLeft(2, '0');
+                            return '$m:$s';
+                          }()),
+                          const SizedBox(height: 30),
+                          _buildActionBtn(
                             "Confirm",
-                            soccerPrimaryPurple,
+                            primaryPurple,
                             fontSize: 18,
                             onTap: _showSignaturePopup,
                           ),
@@ -986,14 +1055,14 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
 
       // ── BOTTOM BUTTONS ───────────────────────
       bottomNavigationBar: Container(
-        color: soccerBgGrey,
+        color: bgGrey,
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
         child: Row(
           children: [
             Expanded(
               child: _buildActionBtn(
                 _timerRunning ? "Pause" : "Start",
-                _timerRunning ? soccerPenaltyRed : soccerStartGreen,
+                _timerRunning ? penaltyRed : startGreen,
                 fontSize: 24,
                 onTap: () {
                   setState(() {
@@ -1011,17 +1080,19 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
             Expanded(
               child: _buildActionBtn(
                 "Reset",
-                soccerResetPurple,
+                resetPurple,
                 fontSize: 24,
                 onTap: () {
                   setState(() {
                     _countdownTimer?.cancel();
                     _timerRunning = false;
                     _remainingSeconds = _totalSeconds;
-                    teamAScore = 0;
-                    teamAFouls = 0;
-                    teamBScore = 0;
-                    teamBFouls = 0;
+                    m01Qty = 0;
+                    m02Qty = 0;
+                    m03Qty = 0;
+                    m04Qty = 0;
+                    m05Qty = 0;
+                    violations = 0;
                   });
                 },
               ),
@@ -1045,9 +1116,9 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
             height: 45,
             padding: const EdgeInsets.symmetric(horizontal: 10),
             decoration: BoxDecoration(
-                color: soccerInputGrey, borderRadius: BorderRadius.circular(5)),
+                color: inputGrey, borderRadius: BorderRadius.circular(5)),
             child: DropdownButtonHideUnderline(
-              child: DropdownButton<SoccerCategoryInfo>(
+              child: DropdownButton<CategoryInfo>(
                 isExpanded: true,
                 value: _selectedCategory,
                 hint: const Text('Select Category',
@@ -1073,7 +1144,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
             left: 5,
             child: Text("CATEGORY",
                 style: TextStyle(
-                    color: soccerPrimaryPurple,
+                    color: primaryPurple,
                     fontWeight: FontWeight.bold,
                     fontSize: 10)),
           ),
@@ -1095,9 +1166,9 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
             height: 45,
             padding: const EdgeInsets.symmetric(horizontal: 10),
             decoration: BoxDecoration(
-                color: soccerInputGrey, borderRadius: BorderRadius.circular(5)),
+                color: inputGrey, borderRadius: BorderRadius.circular(5)),
             child: DropdownButtonHideUnderline(
-              child: DropdownButton<SoccerRoundInfo>(
+              child: DropdownButton<RoundInfo>(
                 isExpanded: true,
                 value: _selectedRound,
                 hint: const Text('Select Competition Info',
@@ -1123,7 +1194,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
             left: 5,
             child: Text("COMPETITION INFO",
                 style: TextStyle(
-                    color: soccerPrimaryPurple,
+                    color: primaryPurple,
                     fontWeight: FontWeight.bold,
                     fontSize: 10)),
           ),
@@ -1153,6 +1224,90 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
     );
   }
 
+  Widget _buildMissionCard(String title, int qty, int points, Color color,
+      ValueChanged<int> onChanged) {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+          color: color, borderRadius: BorderRadius.circular(20)),
+      child: Column(
+        children: [
+          Text(title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 15),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildCounterBtn(Icons.remove,
+                  onTap: () {
+                    if (qty > 0) onChanged(qty - 1);
+                  }),
+              Container(
+                margin:
+                    const EdgeInsets.symmetric(horizontal: 15),
+                width: 70,
+                height: 70,
+                alignment: Alignment.center,
+                decoration: const BoxDecoration(
+                    color: Colors.white, shape: BoxShape.circle),
+                child: Text("$qty",
+                    style: const TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold)),
+              ),
+              _buildCounterBtn(Icons.add,
+                  onTap: () => onChanged(qty + 1)),
+            ],
+          ),
+          const SizedBox(height: 15),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildScoreLabel("$points", "Points / Each"),
+              _buildScoreLabel("${qty * points}", "Total Score"),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScoreLabel(String value, String label) {
+    return Column(
+      children: [
+        Text(value,
+            style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 18)),
+        Text(label,
+            style:
+                const TextStyle(color: Colors.white, fontSize: 9)),
+      ],
+    );
+  }
+
+  Widget _buildScoreRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: const TextStyle(
+                  color: primaryPurple,
+                  fontWeight: FontWeight.bold)),
+          Text(value,
+              style: const TextStyle(
+                  color: primaryPurple,
+                  fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildScoringField(String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 25),
@@ -1162,7 +1317,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
           Container(
             height: 45,
             decoration: BoxDecoration(
-                color: soccerInputGrey,
+                color: inputGrey,
                 borderRadius: BorderRadius.circular(5)),
             padding:
                 const EdgeInsets.symmetric(horizontal: 10),
@@ -1175,10 +1330,22 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
               left: 5,
               child: Text(label,
                   style: const TextStyle(
-                      color: soccerPrimaryPurple,
+                      color: primaryPurple,
                       fontWeight: FontWeight.bold,
                       fontSize: 10))),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCounterBtn(IconData icon, {VoidCallback? onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: const BoxDecoration(
+            color: accentYellow, shape: BoxShape.circle),
+        child: Icon(icon, color: Colors.black, size: 24),
       ),
     );
   }
@@ -1201,66 +1368,12 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
       ),
     );
   }
-  // ─────────────────────────────────────────────
-  // TEAM SCORING COLUMN
-  // ─────────────────────────────────────────────
-  Widget _buildTeamScoringColumn(
-      String name, int score, int fouls,
-      Function(int) onScore, Function(int) onFoul) {
-    return Column(
-      children: [
-        Text(name,
-            style: const TextStyle(
-                fontWeight: FontWeight.bold, color: Colors.black54, fontSize: 12)),
-        const SizedBox(height: 8),
-        _buildScoringBox("GOAL", score, const Color(0xFF2ECC71), onScore),
-        const SizedBox(height: 10),
-        _buildScoringBox("FOUL", fouls, soccerPenaltyRed, onFoul),
-      ],
-    );
-  }
-
-  Widget _buildScoringBox(String label, int value, Color color, Function(int) callback) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(15)),
-      child: Column(
-        children: [
-          Text(label,
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildSoccerCounterBtn(Icons.remove, onTap: () => callback(-1)),
-              Text("$value",
-                  style: const TextStyle(
-                      color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900)),
-              _buildSoccerCounterBtn(Icons.add, onTap: () => callback(1)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSoccerCounterBtn(IconData icon, {VoidCallback? onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(4),
-        decoration: const BoxDecoration(color: Colors.white30, shape: BoxShape.circle),
-        child: Icon(icon, color: Colors.white, size: 24),
-      ),
-    );
-  }
 }
 
 // ─────────────────────────────────────────────
 // GEOMETRIC BACKGROUND PAINTER
 // ─────────────────────────────────────────────
-class SoccerGeometricBackgroundPainter extends CustomPainter {
+class GeometricBackgroundPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..style = PaintingStyle.fill;

@@ -37,14 +37,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final response = await http.get(url);
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
-        data.sort((a, b) {
-          final aActive = (a['status'] == 'active') ? 0 : 1;
-          final bActive = (b['status'] == 'active') ? 0 : 1;
-          if (aActive != bActive) return aActive.compareTo(bActive);
-          final aName = (a['category_type'] ?? '').toString().toLowerCase();
-          final bName = (b['category_type'] ?? '').toString().toLowerCase();
-          return aName.compareTo(bName);
-        });
+      data.sort((a, b) {
+        final aActive = (a['status'] == 'active') ? 0 : 1;
+        final bActive = (b['status'] == 'active') ? 0 : 1;
+        if (aActive != bActive) return aActive.compareTo(bActive);
+        final aId = int.tryParse(a['category_id'].toString()) ?? 0;
+        final bId = int.tryParse(b['category_id'].toString()) ?? 0;
+        return aId.compareTo(bId);
+      });
         return data;
       } else {
         throw Exception('Server error: ${response.statusCode}');

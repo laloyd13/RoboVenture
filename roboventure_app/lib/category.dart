@@ -1,7 +1,7 @@
-// ignore_for_file: deprecated_member_use
+// ignore_for_file: unused_field, deprecated_member_use
 
 import 'package:flutter/material.dart';
-import 'qualification_schedule_screen.dart';
+import 'qualification_sched.dart';
 
 class MainMenuScreen extends StatelessWidget {
   final int categoryId;
@@ -14,8 +14,6 @@ class MainMenuScreen extends StatelessWidget {
     required this.competitionTitle,
     required this.accentColor,
   });
-
-  static const Color _headerColor = Color(0xFF7D58B3);
 
   @override
   Widget build(BuildContext context) {
@@ -43,16 +41,16 @@ class MainMenuScreen extends StatelessWidget {
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: _headerColor, width: 1.5),
+                            border: Border.all(color: accentColor, width: 1.5),
                           ),
                           child: Row(
                             children: [
-                              const Icon(Icons.arrow_back_ios, size: 14, color: _headerColor),
+                              Icon(Icons.arrow_back_ios, size: 14, color: accentColor),
                               const SizedBox(width: 4),
-                              const Text(
+                              Text(
                                 "MAIN MENU",
                                 style: TextStyle(
-                                  color: _headerColor,
+                                  color: accentColor,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 12,
                                 ),
@@ -86,7 +84,7 @@ class MainMenuScreen extends StatelessWidget {
                     children: [
                       _MenuButton(
                         label: 'QUALIFICATION',
-                        color: _headerColor,
+                        color: accentColor,
                         isPrimary: true,
                         onTap: () {
                           Navigator.push(
@@ -104,7 +102,7 @@ class MainMenuScreen extends StatelessWidget {
                       const SizedBox(height: 16),
                       _MenuButton(
                         label: 'CHAMPIONSHIP',
-                        color: _headerColor,
+                        color: accentColor,
                         isPrimary: false,
                         isDisabled: true,
                       ),
@@ -134,8 +132,8 @@ class MainMenuScreen extends StatelessWidget {
 
   Widget _buildGradientText(String text, double fontSize) {
     return ShaderMask(
-      shaderCallback: (bounds) => const LinearGradient(
-        colors: [Color(0xFF9B84D1), Color(0xFF7D58B3)],
+      shaderCallback: (bounds) => LinearGradient(
+        colors: [accentColor.withOpacity(0.7), accentColor],
       ).createShader(bounds),
       child: Text(
         text,

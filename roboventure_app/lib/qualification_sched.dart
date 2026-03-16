@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'scoring.dart';
+import 'mbot1_scoring.dart';
+import 'mbot2_scoring.dart';
+import 'timer_scoring.dart';
+import 'soccer_scoring.dart';
 import 'api_config.dart';
 
 const Color _accentColor = Color(0xFF7D58B3);
@@ -220,11 +223,35 @@ class _QualificationScheduleScreenState
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ScoringPage(
-          matchId:   entry.matchId,
-          teamId:    entry.teamId,
-          refereeId: entry.refereeId,
-        ),
+        builder: (_) {
+          if (widget.competitionTitle.toLowerCase().contains('emerging innovators')) {
+            return Mbot2ScoringPage(
+              matchId:   entry.matchId,
+              teamId:    entry.teamId,
+              refereeId: entry.refereeId,
+            );
+          }
+          if (widget.competitionTitle.toLowerCase().contains('line tracing') ||
+              widget.competitionTitle.toLowerCase().contains('navigation')) {
+            return TimerScoringPage(
+              matchId:   entry.matchId,
+              teamId:    entry.teamId,
+              refereeId: entry.refereeId,
+            );
+          }
+          if (widget.competitionTitle.toLowerCase().contains('soccer')) {
+            return SoccerScoringPage(
+              matchId:   entry.matchId,
+              teamId:    entry.teamId,
+              refereeId: entry.refereeId,
+            );
+          }
+          return Mbot1ScoringPage(
+            matchId:   entry.matchId,
+            teamId:    entry.teamId,
+            refereeId: entry.refereeId,
+          );
+        },
       ),
     );
     _refreshScoredIds();
