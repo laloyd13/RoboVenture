@@ -10,11 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
-
-// ─────────────────────────────────────────────
-// API CONFIG  –  matches your existing roboventure_api pattern
-// ─────────────────────────────────────────────
-const String _baseUrl = 'http://175.20.0.60/roboventure_api'; // <-- replace 'ip' with your server IP
+import 'api_config.dart';
 
 // ─────────────────────────────────────────────
 // DATA MODELS
@@ -92,7 +88,6 @@ class RoundInfo {
 
 // ─────────────────────────────────────────────
 // API SERVICE
-// All calls go to: http://ip/roboventure_api/scoring.php?action=xxx
 // ─────────────────────────────────────────────
 class ScoringApiService {
 
@@ -101,7 +96,7 @@ class ScoringApiService {
     if (params != null) {
       params.forEach((k, v) => queryParams += '&$k=$v');
     }
-    final url = Uri.parse('$_baseUrl/scoring.php?$queryParams');
+    final url = Uri.parse('${ApiConfig.scoring}?$queryParams');
     debugPrint('[API] GET $url');
     final response = await http.get(url).timeout(const Duration(seconds: 10));
     debugPrint('[API] ${response.statusCode} ${response.body.substring(0, response.body.length.clamp(0, 200))}');
@@ -166,7 +161,7 @@ class ScoringApiService {
     required int totalScore,
     required String totalDuration,
   }) async {
-    final url = Uri.parse('$_baseUrl/scoring.php?action=submit_score');
+    final url = Uri.parse('${ApiConfig.scoring}?action=submit_score');
     debugPrint('[API] POST $url');
     final response = await http.post(
       url,
@@ -320,7 +315,7 @@ const Color resetPurple = Color(0xFF79569A);
 // SCORING PAGE
 // ─────────────────────────────────────────────
 class ScoringPage extends StatefulWidget {
-  /// Pass the IDs that were selected before navigating here.
+
   final int matchId;
   final int teamId;
   final int refereeId;
@@ -419,7 +414,6 @@ class _ScoringPageState extends State<ScoringPage> {
     setState(() { _loading = true; _errorMsg = null; });
 
     try {
-      // Fetch sequentially so we get a clear error message if one fails
       final match      = await ScoringApiService.fetchMatch(widget.matchId);
       final referee    = await ScoringApiService.fetchReferee(widget.refereeId);
       final team       = await ScoringApiService.fetchTeam(widget.teamId);
@@ -448,7 +442,6 @@ class _ScoringPageState extends State<ScoringPage> {
     } catch (e) {
       debugPrint('[ScoringPage] _fetchAllData error: $e');
       setState(() {
-        // Show the actual error so you know exactly what failed
         _errorMsg = e.toString();
         _loading  = false;
       });
@@ -503,8 +496,6 @@ class _ScoringPageState extends State<ScoringPage> {
       return;
     }
 
-    // Capture root navigator before async gap so pops target the correct
-    // route stack regardless of which BuildContext (bottom sheet) called us.
     final rootNav = Navigator.of(context, rootNavigator: true);
 
     // Show loading indicator
@@ -531,15 +522,15 @@ class _ScoringPageState extends State<ScoringPage> {
     );
 
     if (!mounted) return;
-    rootNav.pop(); // dismiss loading dialog
+    rootNav.pop();
 
     if (success) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Score submitted successfully!'),
         backgroundColor: saveGreen,
       ));
-      rootNav.pop(); // close signature bottom sheet
-      rootNav.pop(); // go back to qualification schedule screen
+      rootNav.pop();
+      rootNav.pop();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Submission failed. Please try again.'),
@@ -574,7 +565,6 @@ class _ScoringPageState extends State<ScoringPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // ── Title + close button, level on same row ──
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [

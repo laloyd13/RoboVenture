@@ -16,9 +16,8 @@ class _LoadingScreenState extends State<LoadingScreen> {
     _navigateToHome();
   }
 
-  // Added 'Future<void>' to fix the type inference error
   Future<void> _navigateToHome() async {
-    await Future.delayed(const Duration(seconds: 5)); // Simulate loading time
+    await Future.delayed(const Duration(seconds: 5)); // loading time
     
     if (!mounted) return;
     Navigator.pushReplacement(

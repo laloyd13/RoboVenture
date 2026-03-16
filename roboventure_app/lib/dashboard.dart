@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'category.dart'; 
+import 'api_config.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -31,7 +32,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<List<dynamic>> _fetchCategories() async {
-    final url = Uri.parse('http://175.20.0.60/roboventure_api/get_categories.php');
+    final url = Uri.parse(ApiConfig.getCategories);
     try {
       final response = await http.get(url);
       if (response.statusCode == 200) {

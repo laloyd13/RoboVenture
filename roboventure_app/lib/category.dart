@@ -15,7 +15,6 @@ class MainMenuScreen extends StatelessWidget {
     required this.accentColor,
   });
 
-  // Fixed header/card accent color
   static const Color _headerColor = Color(0xFF7D58B3);
 
   @override
@@ -32,7 +31,7 @@ class MainMenuScreen extends StatelessWidget {
           SafeArea(
             child: Column(
               children: [
-                // Top Bar
+
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   child: Row(
@@ -68,7 +67,6 @@ class MainMenuScreen extends StatelessWidget {
 
                 const Spacer(flex: 2),
 
-                // Dynamic Header Text
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: Column(
@@ -82,7 +80,6 @@ class MainMenuScreen extends StatelessWidget {
 
                 const Spacer(flex: 3),
 
-                // Menu Buttons
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 40),
                   child: Column(
@@ -98,7 +95,7 @@ class MainMenuScreen extends StatelessWidget {
                               builder: (_) => QualificationScheduleScreen(
                                 categoryId: categoryId,
                                 competitionTitle: competitionTitle,
-                                themeColor: accentColor, // left as-is
+                                themeColor: accentColor,
                               ),
                             ),
                           );
@@ -117,7 +114,6 @@ class MainMenuScreen extends StatelessWidget {
 
                 const Spacer(flex: 2),
 
-                // Bottom Badges
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
                   child: Row(

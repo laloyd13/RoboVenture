@@ -5,13 +5,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'scoring.dart';
+import 'api_config.dart';
 
-// ─────────────────────────────────────────────
-// API CONFIG
-// ─────────────────────────────────────────────
-const String _scheduleBaseUrl = 'http://175.20.0.60/roboventure_api';
-
-// Fixed accent color for header and cards
 const Color _accentColor = Color(0xFF7D58B3);
 
 // ─────────────────────────────────────────────
@@ -77,7 +72,7 @@ class ScheduleEntry {
 class _ScheduleApiService {
   static Future<List<ArenaInfo>> fetchArenas(int categoryId) async {
     final url = Uri.parse(
-      '$_scheduleBaseUrl/get_arena.php?category_id=$categoryId',
+      '${ApiConfig.getArena}?category_id=$categoryId'
     );
     final response = await http.get(url).timeout(const Duration(seconds: 10));
     if (response.statusCode == 200) {
@@ -95,7 +90,7 @@ class _ScheduleApiService {
   static Future<List<ScheduleEntry>> fetchSchedule(
       int categoryId, int arenaNumber) async {
     final url = Uri.parse(
-      '$_scheduleBaseUrl/get_teamschedule.php?category_id=$categoryId&arena_number=$arenaNumber',
+      '${ApiConfig.getTeamSchedule}?category_id=$categoryId&arena_number=$arenaNumber'
     );
     final response = await http.get(url).timeout(const Duration(seconds: 10));
     if (response.statusCode == 200) {
@@ -109,7 +104,7 @@ class _ScheduleApiService {
 
   static Future<Set<String>> fetchScoredMatchIds(int categoryId) async {
     final url = Uri.parse(
-      '$_scheduleBaseUrl/get_scored_matches.php?category_id=$categoryId',
+      '${ApiConfig.getScoredMatches}?category_id=$categoryId'
     );
     try {
       final response = await http.get(url).timeout(const Duration(seconds: 10));
