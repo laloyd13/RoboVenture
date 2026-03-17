@@ -5,7 +5,7 @@
 
 class ApiConfig {
   // ── Server ────────────────────────────────────────────────────────────────
-  static const String _host = 'http://192.168.254.104'; // <-- replace with your server IP or hostname
+  static const String _host = 'http://175.20.0.63'; // <-- replace with your server IP or hostname
 
   // ── Base path ─────────────────────────────────────────────────────────────
   static const String _basePath = '/roboventure_api';

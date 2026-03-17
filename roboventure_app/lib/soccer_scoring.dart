@@ -150,6 +150,18 @@ class SoccerScoringApiService {
     throw Exception('get_rounds failed [${response.statusCode}]: ${response.body}');
   }
 
+  // GET existing scores for a match
+  static Future<List<Map<String, dynamic>>> fetchMatchScores(int matchId) async {
+    try {
+      final response = await _get('get_match_scores', {'match_id': '$matchId'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data is List) return List<Map<String, dynamic>>.from(data);
+      }
+    } catch (_) {}
+    return [];
+  }
+
   // POST submit score
   static Future<bool> submitScore({
     required int matchId,
@@ -317,15 +329,21 @@ const Color soccerResetPurple = Color(0xFF79569A);
 // ─────────────────────────────────────────────
 class SoccerScoringPage extends StatefulWidget {
 
-  final int matchId;
-  final int teamId;
-  final int refereeId;
+  final int    matchId;
+  final int    teamId;          // home team
+  final int    awayTeamId;      // away team (0 if not passed)
+  final int    refereeId;
+  final String homeTeamName;
+  final String awayTeamName;
 
   const SoccerScoringPage({
     super.key,
     required this.matchId,
     required this.teamId,
+    this.awayTeamId   = 0,
     required this.refereeId,
+    this.homeTeamName = '',
+    this.awayTeamName = '',
   });
 
   @override
@@ -379,17 +397,17 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
   bool _loading = true;
   String? _errorMsg;
 
-  SoccerMatchInfo? _match;
-  SoccerRefereeInfo? _referee;
-  SoccerTeamInfo? _team;
+  SoccerMatchInfo?    _match;
+  SoccerRefereeInfo?  _referee;
+  SoccerTeamInfo?     _team;      // home team
+  SoccerTeamInfo?     _awayTeam;  // away team
 
   List<SoccerCategoryInfo> _categories = [];
-  SoccerCategoryInfo? _selectedCategory;
+  SoccerCategoryInfo?      _selectedCategory;
 
   List<SoccerRoundInfo> _rounds = [];
-  SoccerRoundInfo? _selectedRound;
+  SoccerRoundInfo?      _selectedRound;
 
-  // ─────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
@@ -404,39 +422,70 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
 
   Future<void> _fetchAllData() async {
     setState(() { _loading = true; _errorMsg = null; });
-
     try {
-      final match      = await SoccerScoringApiService.fetchMatch(widget.matchId);
-      final referee    = await SoccerScoringApiService.fetchReferee(widget.refereeId);
-      final team       = await SoccerScoringApiService.fetchTeam(widget.teamId);
-      final categories = await SoccerScoringApiService.fetchCategories();
-      final rounds     = await SoccerScoringApiService.fetchRounds();
+      // Fetch all data in parallel for speed
+      final results = await Future.wait([
+        SoccerScoringApiService.fetchMatch(widget.matchId),
+        SoccerScoringApiService.fetchReferee(widget.refereeId),
+        SoccerScoringApiService.fetchTeam(widget.teamId),
+        if (widget.awayTeamId > 0)
+          SoccerScoringApiService.fetchTeam(widget.awayTeamId),
+        SoccerScoringApiService.fetchCategories(),
+        SoccerScoringApiService.fetchRounds(),
+        SoccerScoringApiService.fetchMatchScores(widget.matchId),
+      ]);
+
+      final match      = results[0] as SoccerMatchInfo?;
+      final referee    = results[1] as SoccerRefereeInfo?;
+      final homeTeam   = results[2] as SoccerTeamInfo?;
+      int ri = 3;
+      SoccerTeamInfo? awayTeam;
+      if (widget.awayTeamId > 0) {
+        awayTeam = results[ri] as SoccerTeamInfo?;
+        ri++;
+      }
+      final categories  = results[ri]   as List<SoccerCategoryInfo>;
+      final rounds      = results[ri+1] as List<SoccerRoundInfo>;
+      final existScores = results[ri+2] as List<Map<String, dynamic>>;
+
+      // Pre-fill scores if already scored
+      bool alreadyScored = existScores.isNotEmpty;
+      if (alreadyScored) {
+        for (final s in existScores) {
+          final tid = int.tryParse(s['team_id']?.toString() ?? '0') ?? 0;
+          final sc  = int.tryParse(s['score_independentscore']?.toString() ?? '0') ?? 0;
+          final foul = int.tryParse(s['score_violation']?.toString() ?? '0') ?? 0;
+          if (tid == widget.teamId) {
+            teamAScore = sc; teamAFouls = foul;
+          } else {
+            teamBScore = sc; teamBFouls = foul;
+          }
+        }
+      }
 
       SoccerCategoryInfo? selCategory;
-      if (team != null && categories.isNotEmpty) {
+      if (homeTeam != null && categories.isNotEmpty) {
         selCategory = categories.firstWhere(
-          (c) => c.categoryId == team.categoryId,
+          (c) => c.categoryId == homeTeam.categoryId,
           orElse: () => categories.first,
         );
       }
 
       setState(() {
-        _match             = match;
-        _referee           = referee;
-        _team              = team;
-        _categories        = categories;
-        _selectedCategory  = selCategory;
-        _rounds            = rounds;
-        _selectedRound     = rounds.isNotEmpty ? rounds.first : null;
-        _loading           = false;
+        _match            = match;
+        _referee          = referee;
+        _team             = homeTeam;
+        _awayTeam         = awayTeam;
+        _categories       = categories;
+        _selectedCategory = selCategory;
+        _rounds           = rounds;
+        _selectedRound    = rounds.isNotEmpty ? rounds.first : null;
+        _loading          = false;
       });
       _initTimer();
     } catch (e) {
       debugPrint('[SoccerScoringPage] _fetchAllData error: $e');
-      setState(() {
-        _errorMsg = e.toString();
-        _loading  = false;
-      });
+      setState(() { _errorMsg = e.toString(); _loading = false; });
     }
   }
 
@@ -501,7 +550,8 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
     final em = (elapsed ~/ 60).toString().padLeft(2, '0');
     final es = (elapsed % 60).toString().padLeft(2, '0');
 
-    final success = await SoccerScoringApiService.submitScore(
+    // Submit score for HOME team
+    final homeSuccess = await SoccerScoringApiService.submitScore(
       matchId:       widget.matchId,
       roundId:       _selectedRound!.roundId,
       teamId:        widget.teamId,
@@ -512,6 +562,24 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
       teamBFouls:    teamBFouls,
       totalDuration: '$em:$es',
     );
+
+    // Submit score for AWAY team (if we have it)
+    bool awaySuccess = true;
+    if (widget.awayTeamId > 0) {
+      awaySuccess = await SoccerScoringApiService.submitScore(
+        matchId:       widget.matchId,
+        roundId:       _selectedRound!.roundId,
+        teamId:        widget.awayTeamId,
+        refereeId:     widget.refereeId,
+        teamAScore:    teamBScore,   // away team's score
+        teamBScore:    teamAScore,   // home team's score (opponent)
+        teamAFouls:    teamBFouls,
+        teamBFouls:    teamAFouls,
+        totalDuration: '$em:$es',
+      );
+    }
+
+    final success = homeSuccess && awaySuccess;
 
     if (!mounted) return;
     rootNav.pop();
@@ -585,17 +653,45 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(
-                              _team?.teamName ?? '—',
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold),
-                            ),
-                            Text(
-                              'ID: ${widget.teamId}',
-                              style: const TextStyle(
-                                  color: Colors.white70, fontSize: 14),
+                            // Home vs Away names
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Expanded(child: Text(
+                                  widget.homeTeamName.isNotEmpty
+                                      ? widget.homeTeamName
+                                      : (_team?.teamName ?? '—'),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold),
+                                )),
+                                Container(
+                                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white24,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: const Text('VS',
+                                      style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w900)),
+                                ),
+                                Expanded(child: Text(
+                                  widget.awayTeamName.isNotEmpty
+                                      ? widget.awayTeamName
+                                      : (_awayTeam?.teamName ?? '—'),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold),
+                                )),
+                              ],
                             ),
                             const SizedBox(height: 15),
                             Row(
@@ -913,28 +1009,99 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                             _referee?.refereeName ?? '—',
                           ),
 
-                          // Team Name (from DB)
-                          _buildScoringField(
-                            "TEAM NAME",
-                            _team?.teamName ?? '—',
+                          // ── VS BANNER ─────────────────────────────
+                          Container(
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(bottom: 20),
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 12, horizontal: 10),
+                            decoration: BoxDecoration(
+                              color: soccerPrimaryPurple.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                  color: soccerPrimaryPurple.withOpacity(0.25)),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                // Home team
+                                Expanded(child: Column(
+                                  children: [
+                                    Text(
+                                      widget.homeTeamName.isNotEmpty
+                                          ? widget.homeTeamName
+                                          : (_team?.teamName ?? '—'),
+                                      textAlign: TextAlign.center,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: soccerPrimaryPurple,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'ID: ${widget.teamId}',
+                                      style: TextStyle(
+                                        color: soccerPrimaryPurple.withOpacity(0.6),
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                )),
+                                // VS badge
+                                Container(
+                                  margin: const EdgeInsets.symmetric(
+                                      horizontal: 10),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 5),
+                                  decoration: BoxDecoration(
+                                    color: soccerPrimaryPurple,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Text('VS',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 1,
+                                      )),
+                                ),
+                                // Away team
+                                Expanded(child: Column(
+                                  children: [
+                                    Text(
+                                      widget.awayTeamName.isNotEmpty
+                                          ? widget.awayTeamName
+                                          : (_awayTeam?.teamName ?? '—'),
+                                      textAlign: TextAlign.center,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: soccerPrimaryPurple,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'ID: ${widget.awayTeamId > 0 ? widget.awayTeamId : (_awayTeam?.teamId ?? '—')}',
+                                      style: TextStyle(
+                                        color: soccerPrimaryPurple.withOpacity(0.6),
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                )),
+                              ],
+                            ),
                           ),
 
-                          Row(
-                            children: [
-                              // Team ID (from DB)
-                              Expanded(
-                                child: _buildScoringField(
-                                  "TEAM ID",
-                                  '${widget.teamId}',
-                                ),
-                              ),
-                              const SizedBox(width: 15),
-                              // Category Dropdown (from tbl_category)
-                              Expanded(
-                                child: _buildCategoryDropdown(),
-                              ),
-                            ],
-                          ),
+                          // Category Dropdown (from tbl_category)
+                          _buildCategoryDropdown(),
 
                           // Competition Info / Round Dropdown (from tbl_round)
                           _buildRoundDropdown(),
@@ -951,7 +1118,11 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                             children: [
                               Expanded(
                                 child: _buildTeamScoringColumn(
-                                  "TEAM A", teamAScore, teamAFouls,
+                                  // Home team name — from widget param, then DB, fallback "TEAM A"
+                                  widget.homeTeamName.isNotEmpty
+                                      ? widget.homeTeamName
+                                      : (_team?.teamName ?? 'TEAM A'),
+                                  teamAScore, teamAFouls,
                                   (v) => setState(() => teamAScore = (teamAScore + v).clamp(0, 99)),
                                   (v) => setState(() => teamAFouls = (teamAFouls + v).clamp(0, 99)),
                                 ),
@@ -959,7 +1130,11 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                               const SizedBox(width: 16),
                               Expanded(
                                 child: _buildTeamScoringColumn(
-                                  "TEAM B", teamBScore, teamBFouls,
+                                  // Away team name — from widget param, then DB, fallback "TEAM B"
+                                  widget.awayTeamName.isNotEmpty
+                                      ? widget.awayTeamName
+                                      : (_awayTeam?.teamName ?? 'TEAM B'),
+                                  teamBScore, teamBFouls,
                                   (v) => setState(() => teamBScore = (teamBScore + v).clamp(0, 99)),
                                   (v) => setState(() => teamBFouls = (teamBFouls + v).clamp(0, 99)),
                                 ),
