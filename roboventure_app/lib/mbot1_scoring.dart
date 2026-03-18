@@ -769,6 +769,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
             elevation: 0,
             backgroundColor: primaryPurple,
             automaticallyImplyLeading: false,
+            toolbarHeight: 70,
             title: GestureDetector(
               onTap: () => Navigator.pop(context),
               child: Row(
@@ -856,11 +857,14 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
                                   border: Border.all(
                                       color: Colors.black,
                                       width: 1.5)),
-                              child: Text(
-                                '${_match?.matchId ?? '—'}',
-                                style: const TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.bold),
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  '${_match?.matchId ?? '—'}',
+                                  style: const TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.bold),
+                                ),
                               ),
                             ),
                           ],

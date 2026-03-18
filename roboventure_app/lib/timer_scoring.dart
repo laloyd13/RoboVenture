@@ -645,6 +645,7 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
             elevation: 0,
             backgroundColor: _primaryPurple,
             automaticallyImplyLeading: false,
+            toolbarHeight: 70,
             title: GestureDetector(
               onTap: () => Navigator.pop(context),
               child: Row(
@@ -708,9 +709,12 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
                                   color: _badgePurple,
                                   borderRadius: BorderRadius.circular(10),
                                   border: Border.all(color: Colors.black, width: 1.5)),
-                              child: Text(
-                                '${_match?.matchId ?? '—'}',
-                                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  '${_match?.matchId ?? '—'}',
+                                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                                ),
                               ),
                             ),
                           ],

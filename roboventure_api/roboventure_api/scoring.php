@@ -290,6 +290,41 @@ switch ($action) {
         $conn->close();
         break;
 
+    // ── GET MATCH SCORES ─────────────────────────────────────────────
+    // GET scoring.php?action=get_match_scores&match_id=1
+    // Returns all score rows for a match (home + away)
+    case 'get_match_scores':
+        if ($method !== 'GET') { methodNotAllowed(); break; }
+
+        $match_id = isset($_GET['match_id']) ? intval($_GET['match_id']) : 0;
+        if ($match_id <= 0) { badRequest('Invalid or missing match_id'); break; }
+
+        $conn = getConnection();
+        $stmt = $conn->prepare("
+            SELECT
+                sc.score_id,
+                sc.team_id,
+                t.team_name,
+                sc.score_independentscore,
+                sc.score_violation,
+                sc.score_totalscore,
+                sc.score_totalduration,
+                sc.score_isapproved,
+                sc.round_id,
+                sc.referee_id
+            FROM tbl_score sc
+            JOIN tbl_team t ON t.team_id = sc.team_id
+            WHERE sc.match_id = ?
+            ORDER BY sc.score_id ASC
+        ");
+        $stmt->bind_param("i", $match_id);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        echo json_encode($rows);
+        $stmt->close();
+        $conn->close();
+        break;
+
     // ── UNKNOWN ACTION ────────────────────────────────────────────────
     default:
         http_response_code(404);
