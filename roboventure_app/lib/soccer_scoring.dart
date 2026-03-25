@@ -247,16 +247,20 @@ class SoccerScoringPage extends StatefulWidget {
   final String awayTeamName;
 
   final bool isChampionship;
+  /// The DB round_id for this championship match (2=ELIM/R16, 3=QF, 4=SF, 5=Final).
+  /// Ignored when isChampionship is false (qualification always uses round_id 1).
+  final int  championshipRoundId;
 
   const SoccerScoringPage({
     super.key,
     required this.matchId,
     required this.teamId,
-    this.awayTeamId    = 0,
+    this.awayTeamId         = 0,
     required this.refereeId,
-    this.homeTeamName  = '',
-    this.awayTeamName  = '',
-    this.isChampionship = false,
+    this.homeTeamName       = '',
+    this.awayTeamName       = '',
+    this.isChampionship     = false,
+    this.championshipRoundId = 1,
   });
 
   @override
@@ -349,7 +353,12 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                   categoryId: 0,
                 )
               : null;
-          _selectedRound = rounds.isNotEmpty ? rounds.first : null;
+          // Select the round matching the championship match's round_id.
+          // Falls back to rounds.first if not found (should never happen).
+          _selectedRound = rounds.cast<SoccerRoundInfo?>().firstWhere(
+            (r) => r?.roundId == widget.championshipRoundId,
+            orElse: () => rounds.isNotEmpty ? rounds.first : null,
+          );
           _loading = false;
         });
         return;
