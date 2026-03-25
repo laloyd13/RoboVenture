@@ -340,8 +340,8 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
   // ── Mission counters ─────────────────────────
   int m01Qty = 0, m02Qty = 0, m03Qty = 0, m04Qty = 0, m05Qty = 0,
       violations = 0;
-  final int m01Points = 10, m02Points = 10, m03Points = 10, m04Points = 10,
-      m05Points = 10;
+  final int m01Points = 30, m02Points = 30, m03Points = 30, m04Points = 30,
+      m05Points = 30;
 
   int get independentScore =>
       (m01Qty * m01Points) +
@@ -963,41 +963,46 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
 
                           // ── MISSIONS ────────────────
                           _buildMissionCard(
-                              "MISSION 1",
+                              "M01: Smart Triage Sorting (Cylinder)",
                               m01Qty,
                               m01Points,
+                              1,
                               missionBlue,
                               (val) =>
                                   setState(() => m01Qty = val)),
                           const SizedBox(height: 20),
                           _buildMissionCard(
-                              "MISSION 2",
+                              "M02: Smart Triage Sorting (Cube)",
                               m02Qty,
                               m02Points,
+                              1,
                               missionGreen.withOpacity(0.7),
                               (val) =>
                                   setState(() => m02Qty = val)),
                           const SizedBox(height: 20),
                           _buildMissionCard(
-                              "MISSION 3",
+                              "M03: LifeSaver Alert",
                               m03Qty,
                               m03Points,
+                              4,
                               missionAmber.withOpacity(0.7),
                               (val) =>
                                   setState(() => m03Qty = val)),
                           const SizedBox(height: 20),
                           _buildMissionCard(
-                              "MISSION 4",
+                              "M04: Voice-Assisted Medical Routing",
                               m04Qty,
                               m04Points,
+                              4,
                               missionPurple.withOpacity(0.7),
                               (val) =>
                                   setState(() => m04Qty = val)),
                           const SizedBox(height: 30),
                           _buildMissionCard(
-                              "MISSION 5",
+                              "M05: Companion Assistance Transfer",
                               m05Qty,
                               m05Points,
+                              4,
                               missionLavender.withOpacity(0.7),
                               (val) =>
                                   setState(() => m05Qty = val)),
@@ -1014,6 +1019,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
                               "VIOLATION",
                               violations,
                               10,
+                              99,
                               penaltyRed,
                               (val) =>
                                   setState(() => violations = val)),
@@ -1228,7 +1234,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
     );
   }
 
-  Widget _buildMissionCard(String title, int qty, int points, Color color,
+  Widget _buildMissionCard(String title, int qty, int points, int maxQty, Color color,
       ValueChanged<int> onChanged) {
     return Container(
       padding: const EdgeInsets.all(15),
@@ -1262,7 +1268,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
                         fontWeight: FontWeight.bold)),
               ),
               _buildCounterBtn(Icons.add,
-                  onTap: () => onChanged(qty + 1)),
+                  onTap: () { if (qty < maxQty) onChanged(qty + 1); }),
             ],
           ),
           const SizedBox(height: 15),

@@ -1,7 +1,6 @@
 // ignore_for_file: unused_element_parameter, deprecated_member_use
 
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
@@ -92,6 +91,11 @@ class _SoccerMatchRow {
   final int    awayId;
   final int    arena;
   final bool   isScored;
+  // Winner info — only meaningful when isScored == true
+  // 'home' | 'away' | 'draw' | '' (not scored yet)
+  final String winner;
+  final int    homeScore;
+  final int    awayScore;
 
   const _SoccerMatchRow({
     required this.matchId,
@@ -101,7 +105,10 @@ class _SoccerMatchRow {
     required this.away,
     required this.awayId,
     required this.arena,
-    this.isScored = false,
+    this.isScored  = false,
+    this.winner    = '',
+    this.homeScore = 0,
+    this.awayScore = 0,
   });
 }
 
@@ -160,6 +167,27 @@ class _ScheduleApiService {
     } catch (_) {}
     return {};
   }
+
+  /// Returns a map of  "matchId_teamId" → score (int)
+  /// Reuses the same getScoredMatches endpoint — expects a `score` field.
+  static Future<Map<String, int>> fetchScoreMap(int categoryId) async {
+    final url = Uri.parse('${ApiConfig.getScoredMatches}?category_id=$categoryId');
+    try {
+      final response = await http.get(url).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        final Map<String, int> map = {};
+        for (final j in data) {
+          final matchId = j['match_id']?.toString() ?? '0';
+          final teamId  = j['team_id']?.toString()  ?? '0';
+          final score   = int.tryParse(j['score_totalscore']?.toString() ?? '0') ?? 0;
+          map['${matchId}_${teamId}'] = score;
+        }
+        return map;
+      }
+    } catch (_) {}
+    return {};
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -199,7 +227,8 @@ class _QualificationScheduleScreenState
   TabController?  _tabController;
 
   final Map<int, Future<List<ScheduleEntry>>> _scheduleFutures = {};
-  Set<String> _scoredMatchIds = {};
+  Set<String>    _scoredMatchIds = {};
+  Map<String, int> _scoreMap    = {};
 
   bool get _soccer => _isSoccer(widget.competitionTitle);
 
@@ -217,8 +246,16 @@ class _QualificationScheduleScreenState
   }
 
   Future<void> _refreshScoredIds() async {
-    final ids = await _ScheduleApiService.fetchScoredMatchIds(widget.categoryId);
-    if (mounted) setState(() => _scoredMatchIds = ids);
+    final results = await Future.wait([
+      _ScheduleApiService.fetchScoredMatchIds(widget.categoryId),
+      _ScheduleApiService.fetchScoreMap(widget.categoryId),
+    ]);
+    if (mounted) {
+      setState(() {
+        _scoredMatchIds = results[0] as Set<String>;
+        _scoreMap       = results[1] as Map<String, int>;
+      });
+    }
   }
 
   Future<void> _loadArenas() async {
@@ -338,18 +375,74 @@ class _QualificationScheduleScreenState
   );
 
   Widget _buildTitleBar() => Column(children: [
+    // ── Banner ─────────────────────────────────────────────
     Container(
-      color: Colors.grey.withOpacity(0.3),
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 20),
-      child: Text(
-        _soccer ? 'QUALIFICATION SCHEDULE' : 'QUALIFICATION SCHEDULE',
-        textAlign: TextAlign.center,
-        style: GoogleFonts.anta(
-          color: const Color.fromARGB(255, 71, 32, 161),
-          fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 1.2,
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF5A3A9A), Color(0xFF7D58B3)],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+        border: Border(
+          bottom: BorderSide(color: Color(0xFFD4A017), width: 3),
         ),
       ),
+      child: Row(children: [
+        Container(
+          width: 44, height: 44,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: const Color(0xFFD4A017).withOpacity(0.2),
+            border: Border.all(color: const Color(0xFFD4A017), width: 1.5),
+          ),
+          child: Icon(
+            _soccer
+                ? Icons.sports_soccer
+                : Icons.precision_manufacturing_outlined,
+            color: const Color(0xFFD4A017), size: 22,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(
+              _soccer ? 'MATCH SCHEDULE' : 'QUALIFICATION SCHEDULE',
+              style: const TextStyle(color: Colors.white,
+                  fontSize: 14, fontWeight: FontWeight.w900,
+                  letterSpacing: 0.5),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              widget.competitionTitle,
+              style: TextStyle(
+                  color: Colors.white.withOpacity(0.65), fontSize: 11),
+            ),
+          ]),
+        ),
+        if (!_arenasLoading && _arenas.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFFD4A017).withOpacity(0.2),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                  color: const Color(0xFFD4A017).withOpacity(0.6), width: 1),
+            ),
+            child: Row(children: [
+              const Icon(Icons.stadium_outlined,
+                  color: Color(0xFFD4A017), size: 14),
+              const SizedBox(width: 5),
+              Text(
+                '${_arenas.length} ${_arenas.length == 1 ? 'ARENA' : 'ARENAS'}',
+                style: const TextStyle(color: Color(0xFFD4A017),
+                    fontSize: 11, fontWeight: FontWeight.w800),
+              ),
+            ]),
+          ),
+      ]),
     ),
     if (!_arenasLoading && _arenasError == null && _arenas.isNotEmpty)
       Container(color: _accentColor, child: _buildTabBar()),
@@ -415,6 +508,7 @@ class _QualificationScheduleScreenState
       children: _arenas.map((arena) => _ArenaScheduleView(
         arenaNumber:    arena.arenaNumber,
         scoredMatchIds: _scoredMatchIds,
+        scoreMap:       _scoreMap,
         // All arenas share the same future — filtered locally by arena_number
         scheduleFuture: _scheduleFutures[0],
         isSoccer:       _soccer,
@@ -432,7 +526,8 @@ class _QualificationScheduleScreenState
 class _ArenaScheduleView extends StatelessWidget {
   final int    arenaNumber;
   final bool   isSoccer;
-  final Set<String> scoredMatchIds;
+  final Set<String>    scoredMatchIds;
+  final Map<String, int> scoreMap;
   final Future<List<ScheduleEntry>>? scheduleFuture;
   final Future<void> Function() onRefresh;
   final VoidCallback onTabVisible;
@@ -442,6 +537,7 @@ class _ArenaScheduleView extends StatelessWidget {
     required this.arenaNumber,
     required this.isSoccer,
     required this.scoredMatchIds,
+    required this.scoreMap,
     required this.scheduleFuture,
     required this.onRefresh,
     required this.onTabVisible,
@@ -451,7 +547,9 @@ class _ArenaScheduleView extends StatelessWidget {
   // Pivot flat entries into home+away rows for soccer.
   // Sort by teamschedule_id first — lower ID = HOME, matching Windows app.
   List<_SoccerMatchRow> _pivot(
-      List<ScheduleEntry> entries, Set<String> scoredMatchIds) {
+      List<ScheduleEntry> entries,
+      Set<String> scoredMatchIds,
+      Map<String, int> scoreMap) {
     final sorted = List<ScheduleEntry>.from(entries)
       ..sort((a, b) => (a.teamscheduleId).compareTo(b.teamscheduleId));
 
@@ -484,11 +582,20 @@ class _ArenaScheduleView extends StatelessWidget {
     final result = byMatch.values.whereType<_SoccerMatchRow>().toList()
       ..sort((a, b) => a.matchId.compareTo(b.matchId));
 
-    // Mark scored when BOTH home and away have an entry in tbl_score.
+    // Mark scored when BOTH teams have an entry in tbl_score.
+    // Scores are looked up directly by each team's own ID — never swapped
+    // by home/away slot order.
     return result.map((row) {
-      final homeScored = scoredMatchIds.contains('${row.matchId}_${row.homeId}');
-      final awayScored = row.awayId != 0 &&
-          scoredMatchIds.contains('${row.matchId}_${row.awayId}');
+      final team1Key    = '${row.matchId}_${row.homeId}';
+      final team2Key    = '${row.matchId}_${row.awayId}';
+      final team1Scored = scoredMatchIds.contains(team1Key);
+      final team2Scored = row.awayId != 0 && scoredMatchIds.contains(team2Key);
+      final bothScored  = team1Scored && team2Scored;
+
+      // Score keyed by each team's own ID — swap corrects the display order
+      final hScore = bothScored ? (scoreMap[team2Key] ?? 0) : 0;
+      final aScore = bothScored ? (scoreMap[team1Key] ?? 0) : 0;
+
       return _SoccerMatchRow(
         matchId:       row.matchId,
         home:          row.home,
@@ -497,7 +604,10 @@ class _ArenaScheduleView extends StatelessWidget {
         away:          row.away,
         awayId:        row.awayId,
         arena:         row.arena,
-        isScored:      homeScored && awayScored,
+        isScored:      bothScored,
+        winner:        '', // unused — W/L derived from scores directly in UI
+        homeScore:     hScore,
+        awayScore:     aScore,
       );
     }).toList();
   }
@@ -568,7 +678,7 @@ class _ArenaScheduleView extends StatelessWidget {
           // ── SOCCER: show MATCH | HOME | VS | AWAY table ──────────────
           if (isSoccer) {
             // entries already filtered by arenaNumber above — just pivot
-            final rows = _pivot(entries, scoredMatchIds)
+            final rows = _pivot(entries, scoredMatchIds, scoreMap)
               // Scored matches sink to the bottom, same as non-soccer
               ..sort((a, b) {
                 final aS = a.isScored ? 1 : 0;
@@ -654,10 +764,57 @@ class _SoccerMatchTable extends StatelessWidget {
     );
   }
 
+  // ── W / L / D badge helper ───────────────────────────────────────────────
+  Widget _resultBadge(String label) {
+    final Color bg;
+    final Color border;
+    final Color text;
+
+    switch (label) {
+      case 'W':
+        bg     = const Color(0xFF1B5E20).withOpacity(0.85);
+        border = Colors.greenAccent;
+        text   = Colors.greenAccent;
+        break;
+      case 'L':
+        bg     = const Color(0xFFB71C1C).withOpacity(0.75);
+        border = Colors.redAccent;
+        text   = Colors.redAccent.shade100;
+        break;
+      default: // 'D'
+        bg     = const Color(0xFF424242).withOpacity(0.80);
+        border = Colors.white54;
+        text   = Colors.white70;
+    }
+
+    return Container(
+      width: 24, height: 24,
+      decoration: BoxDecoration(
+        color: bg,
+        shape: BoxShape.circle,
+        border: Border.all(color: border, width: 1.5),
+      ),
+      alignment: Alignment.center,
+      child: Text(label,
+          style: TextStyle(
+              color: text, fontSize: 10, fontWeight: FontWeight.w900)),
+    );
+  }
+
   Widget _buildRow(_SoccerMatchRow m, int i) {
     // Even index = full colour, odd = slightly dimmed; scored = always dimmed
     final baseColor = i % 2 == 0 ? _accentColor : _accentColor.withOpacity(0.75);
     final cardColor = m.isScored ? _accentColor.withOpacity(0.50) : baseColor;
+
+    // Resolve per-side result label — purely score-based
+    final String homeLabel = !m.isScored ? ''
+        : m.homeScore > m.awayScore ? 'W'
+        : m.homeScore < m.awayScore ? 'L'
+        : 'D';
+    final String awayLabel = !m.isScored ? ''
+        : m.awayScore > m.homeScore ? 'W'
+        : m.awayScore < m.homeScore ? 'L'
+        : 'D';
 
     return GestureDetector(
       onTap: m.isScored ? null : () => onTap(m),
@@ -688,6 +845,7 @@ class _SoccerMatchTable extends StatelessWidget {
                   textAlign: TextAlign.right)),
               if (m.isScored)
                 Container(
+                  margin: const EdgeInsets.only(left: 8),
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
                     color: Colors.greenAccent.withOpacity(0.30),
@@ -703,7 +861,7 @@ class _SoccerMatchTable extends StatelessWidget {
                 ),
             ]),
           ),
-          // Values
+          // Values row
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
             child: Row(
@@ -717,16 +875,46 @@ class _SoccerMatchTable extends StatelessWidget {
                       style: const TextStyle(color: Colors.white,
                           fontSize: 28, fontWeight: FontWeight.w900)),
                 )),
-                // Home
-                Expanded(child: Text(
-                  m.home.isNotEmpty ? m.home : 'TBD',
-                  maxLines: 2, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: m.home.isNotEmpty ? Colors.white : Colors.white38,
-                    fontSize: 13, fontWeight: FontWeight.w700, height: 1.3,
+                // ── Home team + W/L/D badge + score ─────────────────────
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          if (homeLabel.isNotEmpty) ...[
+                            _resultBadge(homeLabel),
+                            const SizedBox(width: 6),
+                          ],
+                          Expanded(child: Text(
+                            m.home.isNotEmpty ? m.home : 'TBD',
+                            maxLines: 2, overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: m.home.isNotEmpty ? Colors.white : Colors.white38,
+                              fontSize: 13, fontWeight: FontWeight.w700, height: 1.3,
+                            ),
+                          )),
+                        ],
+                      ),
+                      if (m.isScored) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          '${m.homeScore} pts',
+                          style: TextStyle(
+                            color: homeLabel == 'W'
+                                ? Colors.greenAccent
+                                : homeLabel == 'L'
+                                    ? Colors.redAccent.shade100
+                                    : Colors.white60,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                )),
-                // VS
+                ),
+                // VS pill
                 SizedBox(width: 40, child: Center(child: Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 6, vertical: 4),
@@ -739,16 +927,83 @@ class _SoccerMatchTable extends StatelessWidget {
                       style: TextStyle(color: Colors.white,
                           fontSize: 10, fontWeight: FontWeight.w900)),
                 ))),
-                // Away
-                Expanded(child: Text(
-                  m.away.isNotEmpty ? m.away : 'TBD',
-                  textAlign: TextAlign.right,
-                  maxLines: 2, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: m.away.isNotEmpty ? Colors.white : Colors.white38,
-                    fontSize: 13, fontWeight: FontWeight.w700, height: 1.3,
+                // ── Away team + W/L/D badge + score ─────────────────────
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Expanded(child: Text(
+                            m.away.isNotEmpty ? m.away : 'TBD',
+                            textAlign: TextAlign.right,
+                            maxLines: 2, overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: m.away.isNotEmpty ? Colors.white : Colors.white38,
+                              fontSize: 13, fontWeight: FontWeight.w700, height: 1.3,
+                            ),
+                          )),
+                          if (awayLabel.isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            _resultBadge(awayLabel),
+                          ],
+                        ],
+                      ),
+                      if (m.isScored) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          '${m.awayScore} pts',
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            color: awayLabel == 'W'
+                                ? Colors.greenAccent
+                                : awayLabel == 'L'
+                                    ? Colors.redAccent.shade100
+                                    : Colors.white60,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                )),
+                ),
+              ],
+            ),
+          ),
+          // ── Footer
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.12),
+              borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(8)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (!m.isScored) ...[
+                  Text('TAP TO SCORE',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.55),
+                        fontSize: 9, fontWeight: FontWeight.w700,
+                        letterSpacing: 0.8,
+                      )),
+                  const SizedBox(width: 3),
+                  Icon(Icons.chevron_right_rounded,
+                      color: Colors.white.withOpacity(0.55), size: 14),
+                ] else ...[
+                  Icon(Icons.check_circle_outline_rounded,
+                      color: Colors.greenAccent.withOpacity(0.7), size: 12),
+                  const SizedBox(width: 4),
+                  Text('COMPLETED',
+                      style: TextStyle(
+                        color: Colors.greenAccent.withOpacity(0.7),
+                        fontSize: 9, fontWeight: FontWeight.w700,
+                        letterSpacing: 0.8,
+                      )),
+                ],
               ],
             ),
           ),
@@ -887,6 +1142,41 @@ class _MatchCard extends StatelessWidget {
                 // Reserve 68px matching the SCORED badge slot in header
                 // so team name width is identical whether scored or not
                 const SizedBox(width: 68),
+              ],
+            ),
+          ),
+          // ── Footer
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.12),
+              borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(8)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (!isScored) ...[
+                  Text('TAP TO SCORE',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.55),
+                        fontSize: 9, fontWeight: FontWeight.w700,
+                        letterSpacing: 0.8,
+                      )),
+                  const SizedBox(width: 3),
+                  Icon(Icons.chevron_right_rounded,
+                      color: Colors.white.withOpacity(0.55), size: 14),
+                ] else ...[
+                  Icon(Icons.check_circle_outline_rounded,
+                      color: Colors.greenAccent.withOpacity(0.7), size: 12),
+                  const SizedBox(width: 4),
+                  Text('COMPLETED',
+                      style: TextStyle(
+                        color: Colors.greenAccent.withOpacity(0.7),
+                        fontSize: 9, fontWeight: FontWeight.w700,
+                        letterSpacing: 0.8,
+                      )),
+                ],
               ],
             ),
           ),

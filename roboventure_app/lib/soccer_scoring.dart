@@ -131,9 +131,14 @@ class SoccerScoringApiService {
   static Future<bool> submitScore({
     required int matchId, required int roundId, required int teamId,
     required int refereeId, required int teamAScore, required int teamBScore,
-    required int teamAFouls, required int teamBFouls, required String totalDuration,
+    required int teamAFouls, required int teamBFouls,
+    required String totalDuration,
+    bool isChampionship = false,
   }) async {
-    final url = Uri.parse('${ApiConfig.scoring}?action=submit_score');
+    // Championship matches use a separate action that bypasses FK checks
+    // since their match IDs don't exist in tbl_match.
+    final action = isChampionship ? 'championship_submit_score' : 'submit_score';
+    final url = Uri.parse('${ApiConfig.scoring}?action=$action');
     final res = await http.post(url,
       headers: {'Content-Type': 'application/json'},
       body: json.encode({
@@ -241,14 +246,17 @@ class SoccerScoringPage extends StatefulWidget {
   final String homeTeamName;
   final String awayTeamName;
 
+  final bool isChampionship;
+
   const SoccerScoringPage({
     super.key,
     required this.matchId,
     required this.teamId,
-    this.awayTeamId   = 0,
+    this.awayTeamId    = 0,
     required this.refereeId,
-    this.homeTeamName = '',
-    this.awayTeamName = '',
+    this.homeTeamName  = '',
+    this.awayTeamName  = '',
+    this.isChampionship = false,
   });
 
   @override
@@ -318,6 +326,36 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
   Future<void> _fetchAllData() async {
     setState(() { _loading = true; _errorMsg = null; });
     try {
+      if (widget.isChampionship) {
+        // Championship: skip get_match & get_team — use passed names directly.
+        // Only fetch rounds so the round dropdown works.
+        final rounds = await SoccerScoringApiService.fetchRounds();
+        setState(() {
+          _match = SoccerMatchInfo(
+            matchId: widget.matchId, scheduleId: 0,
+            scheduleStart: '—', scheduleEnd: '—',
+          );
+          _team = SoccerTeamInfo(
+            teamId: widget.teamId,
+            teamName: widget.homeTeamName.isNotEmpty
+                ? widget.homeTeamName : 'Home Team',
+            categoryId: 0,
+          );
+          _awayTeam = widget.awayTeamId > 0
+              ? SoccerTeamInfo(
+                  teamId: widget.awayTeamId,
+                  teamName: widget.awayTeamName.isNotEmpty
+                      ? widget.awayTeamName : 'Away Team',
+                  categoryId: 0,
+                )
+              : null;
+          _selectedRound = rounds.isNotEmpty ? rounds.first : null;
+          _loading = false;
+        });
+        return;
+      }
+
+      // Standard qualification flow
       final results = await Future.wait([
         SoccerScoringApiService.fetchMatch(widget.matchId),
         SoccerScoringApiService.fetchReferee(widget.refereeId),
@@ -392,6 +430,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
       teamId: widget.teamId, refereeId: widget.refereeId,
       teamAScore: teamAScore, teamBScore: teamBScore,
       teamAFouls: 0, teamBFouls: 0, totalDuration: dur,
+      isChampionship: widget.isChampionship,
     );
     bool awayOk = true;
     if (widget.awayTeamId > 0) {
@@ -400,14 +439,16 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
         teamId: widget.awayTeamId, refereeId: widget.refereeId,
         teamAScore: teamBScore, teamBScore: teamAScore,
         teamAFouls: 0, teamBFouls: 0, totalDuration: dur,
+        isChampionship: widget.isChampionship,
       );
     }
     if (!mounted) return;
-    rootNav.pop();
+    rootNav.pop(); // dismiss loading dialog
     if (homeOk && awayOk) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Score submitted!'), backgroundColor: _saveGreen));
-      rootNav.pop(); rootNav.pop();
+      Navigator.pop(ctx);           // close the MATCH SUMMARY dialog
+      Navigator.pop(context, true); // return true → championship marks as scored
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Submission failed.'), backgroundColor: _penaltyRed));

@@ -5,7 +5,7 @@
 
 class ApiConfig {
   // ── Server ────────────────────────────────────────────────────────────────
-  static const String _host = 'http://175.20.0.63'; // <-- replace with your server IP or hostname
+  static const String _host = 'http://175.20.0.43'; // <-- replace with your server IP or hostname
 
   // ── Base path ─────────────────────────────────────────────────────────────
   static const String _basePath = '/roboventure_api';
@@ -27,4 +27,7 @@ class ApiConfig {
 
   /// scoring.dart  →  ScoringApiService (all actions)
   static const String scoring         = '$baseUrl/scoring.php';
+
+  /// championship_sched.dart  →  _ChampApiService.fetchScoredMatchIds()
+  static const String getScoredChampionshipMatches = '$baseUrl/get_scored_championship_matches.php';
 }

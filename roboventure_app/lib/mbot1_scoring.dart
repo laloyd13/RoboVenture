@@ -963,41 +963,46 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
 
                           // ── MISSIONS ────────────────
                           _buildMissionCard(
-                              "M01 Smart Triage Sorting(Cylinder)",
+                              "M01: Smart Triage Sorting(Cylinder)",
                               m01Qty,
                               m01Points,
+                              1,
                               missionBlue,
                               (val) =>
                                   setState(() => m01Qty = val)),
                           const SizedBox(height: 20),
                           _buildMissionCard(
-                              "M02 Smart Triage Sorting(Cube)",
+                              "M02: Smart Triage Sorting(Cube)",
                               m02Qty,
                               m02Points,
+                              1,
                               missionGreen.withOpacity(0.7),
                               (val) =>
                                   setState(() => m02Qty = val)),
                           const SizedBox(height: 20),
                           _buildMissionCard(
-                              "M03 LifeSaver Alert",
+                              "M03: LifeSaver Alert",
                               m03Qty,
                               m03Points,
+                              4,
                               missionAmber.withOpacity(0.7),
                               (val) =>
                                   setState(() => m03Qty = val)),
                           const SizedBox(height: 20),
                           _buildMissionCard(
-                              "M04 Critical Rescue Delivery",
+                              "M04: Critical Rescue Delivery",
                               m04Qty,
                               m04Points,
+                              4,
                               missionPurple.withOpacity(0.7),
                               (val) =>
                                   setState(() => m04Qty = val)),
                           const SizedBox(height: 30),
                           _buildMissionCard(
-                              "M05 Safe Passage Protocol",
+                              "M05: Safe Passage Protocol",
                               m05Qty,
                               m05Points,
+                              2,
                               missionLavender.withOpacity(0.7),
                               (val) =>
                                   setState(() => m05Qty = val)),
@@ -1014,6 +1019,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
                               "VIOLATION",
                               violations,
                               10,
+                              99, // no max limit for violations
                               penaltyRed,
                               (val) =>
                                   setState(() => violations = val)),
@@ -1228,7 +1234,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
     );
   }
 
-  Widget _buildMissionCard(String title, int qty, int points, Color color,
+  Widget _buildMissionCard(String title, int qty, int points, int maxQty, Color color,
       ValueChanged<int> onChanged) {
     return Container(
       padding: const EdgeInsets.all(15),
@@ -1262,7 +1268,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
                         fontWeight: FontWeight.bold)),
               ),
               _buildCounterBtn(Icons.add,
-                  onTap: () => onChanged(qty + 1)),
+                  onTap: () { if (qty < maxQty) onChanged(qty + 1); }),
             ],
           ),
           const SizedBox(height: 15),

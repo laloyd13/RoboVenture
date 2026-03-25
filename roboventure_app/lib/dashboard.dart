@@ -264,7 +264,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: const Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _LogoBadge(imagePath: 'assets/makeblock.png'),
+          _LogoBadge(imagePath: 'assets/RV_logo.png'),
           _LogoBadge(imagePath: 'assets/CreoLogo.png'),
         ],
       ),
