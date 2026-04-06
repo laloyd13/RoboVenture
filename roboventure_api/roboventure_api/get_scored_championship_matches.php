@@ -1,8 +1,20 @@
 <?php
+// ─────────────────────────────────────────────────────────────────────
+// get_scored_championship_matches.php
+// GET ?category_id=4
+//
+// Returns all match_id values that have at least one score entry in
+// tbl_score for knockout rounds (elimination → final).
+//
+// Uses bracket_type from tbl_match instead of hardcoded match ID ranges,
+// so it works correctly with auto-generated match IDs from the admin app.
+// ─────────────────────────────────────────────────────────────────────
 ini_set('display_errors', 0);
 error_reporting(0);
 
 header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+header('Cache-Control: no-store, no-cache, must-revalidate');
 
 require_once 'db_config.php';
 
@@ -14,32 +26,27 @@ if ($category_id === 0) {
     exit;
 }
 
-// Championship + ELIM match IDs recognised by the Flutter app:
-//
-//   ELIM:          501–512   (up to 12 matches; actual count depends on group count)
-//   R16:           1001–1016
-//   QUARTER-FINAL: 101–104
-//   SEMI-FINAL:    201–202
-//   FINAL:         301
-//
-// A match is considered scored when at least ONE team entry exists in tbl_score
-// for that match_id, joined to tbl_team to confirm it belongs to this category.
-
-$stmt = $conn->prepare(
-    "SELECT DISTINCT s.match_id
-     FROM tbl_score s
-     INNER JOIN tbl_team t ON t.team_id = s.team_id
-     WHERE t.category_id = ?
-       AND s.match_id IN (
-           501, 502, 503, 504, 505, 506,
-           507, 508, 509, 510, 511, 512,
-           101, 102, 103, 104,
-           201, 202,
-           301,
-           1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008,
-           1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016
-       )"
-);
+// A match is considered scored when at least ONE tbl_score entry exists
+// for that match_id, confirmed via tbl_team to belong to this category.
+// Uses bracket_type to identify knockout rounds — no hardcoded match IDs.
+$stmt = $conn->prepare("
+    SELECT DISTINCT m.match_id, m.bracket_type
+    FROM tbl_score sc
+    INNER JOIN tbl_match m ON m.match_id = sc.match_id
+    INNER JOIN tbl_team  t ON t.team_id  = sc.team_id
+    WHERE t.category_id = ?
+      AND m.bracket_type IN (
+          'elimination',
+          'round-of-32',
+          'round-of-16',
+          'round-of-8',
+          'quarter-finals',
+          'semi-finals',
+          'third-place',
+          'final'
+      )
+    ORDER BY m.match_id ASC
+");
 
 if (!$stmt) {
     http_response_code(500);
@@ -53,7 +60,10 @@ $result = $stmt->get_result();
 
 $rows = [];
 while ($row = $result->fetch_assoc()) {
-    $rows[] = ["match_id" => (int)$row["match_id"]];
+    $rows[] = [
+        "match_id"     => (int)$row["match_id"],
+        "bracket_type" => $row["bracket_type"],
+    ];
 }
 
 $stmt->close();

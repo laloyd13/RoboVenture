@@ -1,17 +1,22 @@
 <?php
 // ─────────────────────────────────────────────────────────────────────
+// scoring.php
+//
 // ENDPOINTS
-//   GET  api.php?action=get_match&match_id=1
-//   GET  api.php?action=get_referee&referee_id=1
-//   GET  api.php?action=get_team&team_id=1
-//   GET  api.php?action=get_categories
-//   GET  api.php?action=get_rounds
-//   POST api.php?action=submit_score   (JSON body)
+//   GET  scoring.php?action=get_match&match_id=1
+//   GET  scoring.php?action=get_referee&referee_id=1
+//   GET  scoring.php?action=get_team&team_id=1
+//   GET  scoring.php?action=get_categories
+//   GET  scoring.php?action=get_rounds
+//   GET  scoring.php?action=get_match_scores&match_id=1
+//   GET  scoring.php?action=get_team_count&category_id=4
+//   GET  scoring.php?action=get_group_standings&category_id=4
+//   GET  scoring.php?action=get_qualifiers&category_id=4
+//   GET  scoring.php?action=get_knockout_matches&category_id=4&bracket_type=quarter-finals
+//   POST scoring.php?action=submit_score          (JSON body)
+//   POST scoring.php?action=championship_submit_score  (JSON body)
 // ─────────────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────────────
-// DATABASE CONFIG
-// ─────────────────────────────────────────────────────────────────────
 require_once 'db_config.php';
 
 // ─────────────────────────────────────────────────────────────────────
@@ -42,8 +47,8 @@ if (empty($action)) {
 switch ($action) {
 
     // ── GET MATCH ─────────────────────────────────────────────────────
-    // GET api.php?action=get_match&match_id=1
-    // Joins tbl_match with tbl_schedule
+    // GET scoring.php?action=get_match&match_id=1
+    // Returns match info including bracket_type so the app knows the round.
     case 'get_match':
         if ($method !== 'GET') { methodNotAllowed(); break; }
 
@@ -52,11 +57,13 @@ switch ($action) {
 
         $conn = getConnection();
         $stmt = $conn->prepare("
-            SELECT 
+            SELECT
                 m.match_id,
                 m.schedule_id,
+                m.bracket_type,
                 s.schedule_start,
-                s.schedule_end
+                s.schedule_end,
+                TIME_FORMAT(s.schedule_start, '%H:%i') AS match_time
             FROM tbl_match m
             INNER JOIN tbl_schedule s ON m.schedule_id = s.schedule_id
             WHERE m.match_id = ?
@@ -78,7 +85,7 @@ switch ($action) {
         break;
 
     // ── GET REFEREE ───────────────────────────────────────────────────
-    // GET api.php?action=get_referee&referee_id=1
+    // GET scoring.php?action=get_referee&referee_id=1
     case 'get_referee':
         if ($method !== 'GET') { methodNotAllowed(); break; }
 
@@ -87,10 +94,9 @@ switch ($action) {
 
         $conn = getConnection();
         $stmt = $conn->prepare("
-            SELECT 
+            SELECT
                 referee_id,
-                referee_name,
-                arena_id
+                referee_name
             FROM tbl_referee
             WHERE referee_id = ?
             LIMIT 1
@@ -111,7 +117,7 @@ switch ($action) {
         break;
 
     // ── GET TEAM ──────────────────────────────────────────────────────
-    // GET api.php?action=get_team&team_id=1
+    // GET scoring.php?action=get_team&team_id=1
     case 'get_team':
         if ($method !== 'GET') { methodNotAllowed(); break; }
 
@@ -120,7 +126,7 @@ switch ($action) {
 
         $conn = getConnection();
         $stmt = $conn->prepare("
-            SELECT 
+            SELECT
                 team_id,
                 team_name,
                 team_ispresent,
@@ -146,13 +152,13 @@ switch ($action) {
         break;
 
     // ── GET CATEGORIES ────────────────────────────────────────────────
-    // GET api.php?action=get_categories
+    // GET scoring.php?action=get_categories
     case 'get_categories':
         if ($method !== 'GET') { methodNotAllowed(); break; }
 
         $conn = getConnection();
         $result = $conn->query("
-            SELECT 
+            SELECT
                 category_id,
                 category_type,
                 status
@@ -171,13 +177,13 @@ switch ($action) {
         break;
 
     // ── GET ROUNDS ────────────────────────────────────────────────────
-    // GET api.php?action=get_rounds
+    // GET scoring.php?action=get_rounds
     case 'get_rounds':
         if ($method !== 'GET') { methodNotAllowed(); break; }
 
         $conn = getConnection();
         $result = $conn->query("
-            SELECT 
+            SELECT
                 round_id,
                 round_type
             FROM tbl_round
@@ -194,16 +200,17 @@ switch ($action) {
         break;
 
     // ── SUBMIT SCORE ──────────────────────────────────────────────────
-    // POST api.php?action=submit_score
+    // POST scoring.php?action=submit_score
+    // Used for group stage / qualification rounds.
     // Body (JSON):
     // {
-    //   "match_id": 1,
+    //   "match_id": 47,
     //   "round_id": 1,
-    //   "team_id": 1,
+    //   "team_id": 12,
     //   "referee_id": 1,
-    //   "score_independentscore": 120,
-    //   "score_violation": 1,
-    //   "score_totalscore": 110,
+    //   "score_independentscore": 3,
+    //   "score_violation": 0,
+    //   "score_totalscore": 3,
     //   "score_totalduration": "02:35",
     //   "score_isapproved": 0
     // }
@@ -215,7 +222,6 @@ switch ($action) {
 
         if (!$data) { badRequest('Invalid or empty JSON body'); break; }
 
-        // Validate required fields
         $required = [
             'match_id', 'round_id', 'team_id', 'referee_id',
             'score_independentscore', 'score_violation',
@@ -228,7 +234,6 @@ switch ($action) {
             }
         }
 
-        // Sanitize
         $match_id         = intval($data['match_id']);
         $round_id         = intval($data['round_id']);
         $team_id          = intval($data['team_id']);
@@ -236,7 +241,7 @@ switch ($action) {
         $independentScore = intval($data['score_independentscore']);
         $violation        = intval($data['score_violation']);
         $totalScore       = intval($data['score_totalscore']);
-        $totalDuration    = $data['score_totalduration'];   // e.g. "02:35"
+        $totalDuration    = $data['score_totalduration'];
         $isApproved       = isset($data['score_isapproved']) ? intval($data['score_isapproved']) : 0;
 
         $conn = getConnection();
@@ -277,9 +282,9 @@ switch ($action) {
         if ($stmt->execute()) {
             http_response_code(201);
             echo json_encode([
-                'success' => true,
+                'success'  => true,
                 'score_id' => $conn->insert_id,
-                'message' => 'Score submitted successfully'
+                'message'  => 'Score submitted successfully'
             ]);
         } else {
             http_response_code(500);
@@ -291,8 +296,8 @@ switch ($action) {
         break;
 
     // ── GET MATCH SCORES ─────────────────────────────────────────────
-    // GET scoring.php?action=get_match_scores&match_id=1
-    // Returns all score rows for a match (home + away)
+    // GET scoring.php?action=get_match_scores&match_id=47
+    // Returns all score rows for a match (home + away).
     case 'get_match_scores':
         if ($method !== 'GET') { methodNotAllowed(); break; }
 
@@ -327,8 +332,6 @@ switch ($action) {
 
     // ── GET TEAM COUNT ────────────────────────────────────────────────
     // GET scoring.php?action=get_team_count&category_id=4
-    // For soccer: counts distinct teams in tbl_soccer_groups for this category.
-    // R16 is always active for soccer (top 2 per group × 8 groups = 16 teams).
     case 'get_team_count':
         if ($method !== 'GET') { methodNotAllowed(); break; }
 
@@ -343,10 +346,8 @@ switch ($action) {
         ");
         $stmt->bind_param("i", $category_id);
         $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        // If teams exist in tbl_soccer_groups, use that count.
-        // R16 activates when >= 16 teams (8 groups × 2 qualifiers).
-        $count = (int) ($row['count'] ?? 0);
+        $row   = $stmt->get_result()->fetch_assoc();
+        $count = (int)($row['count'] ?? 0);
         echo json_encode(['count' => $count]);
         $stmt->close();
         $conn->close();
@@ -355,9 +356,6 @@ switch ($action) {
     // ── GET GROUP STANDINGS ───────────────────────────────────────────
     // GET scoring.php?action=get_group_standings&category_id=4
     // Returns per-group standings with W/D/L/Pts/GD for all teams.
-    // Uses tbl_soccer_groups for group membership and tbl_score for results.
-    // Match results: score_independentscore = goals scored by that team row.
-    // The AWAY team's score is in the partner row of the same match_id.
     case 'get_group_standings':
         if ($method !== 'GET') { methodNotAllowed(); break; }
 
@@ -378,24 +376,24 @@ switch ($action) {
         $gRows = $gStmt->get_result()->fetch_all(MYSQLI_ASSOC);
         $gStmt->close();
 
-        // Build: group_label -> [team_id -> team_name]
-        $groups = [];
-        $teamGroup = []; // team_id -> group_label
+        $groups    = [];
+        $teamGroup = [];
         foreach ($gRows as $r) {
-            $g = $r['group_label'];
+            $g   = $r['group_label'];
             $tid = (int)$r['team_id'];
             if (!isset($groups[$g])) $groups[$g] = [];
             $groups[$g][$tid] = $r['team_name'];
-            $teamGroup[$tid] = $g;
+            $teamGroup[$tid]  = $g;
         }
 
-        // 2. Get all qualification scores for this category
+        // 2. Get all group-stage scores for this category using bracket_type
         $sStmt = $conn->prepare("
             SELECT s.match_id, s.team_id, s.score_independentscore AS goals
             FROM tbl_score s
-            JOIN tbl_team t ON t.team_id = s.team_id
+            JOIN tbl_team  t ON t.team_id  = s.team_id
+            JOIN tbl_match m ON m.match_id = s.match_id
             WHERE t.category_id = ?
-              AND s.round_id = 1
+              AND m.bracket_type = 'group'
             ORDER BY s.match_id ASC, s.score_id ASC
         ");
         $sStmt->bind_param("i", $category_id);
@@ -403,14 +401,11 @@ switch ($action) {
         $sRows = $sStmt->get_result()->fetch_all(MYSQLI_ASSOC);
         $sStmt->close();
 
-        // Group scores by match_id (each match has 2 rows: home + away)
         $matchRows = [];
         foreach ($sRows as $r) {
             $matchRows[(int)$r['match_id']][] = $r;
         }
 
-        // 3. Calculate standings per team
-        // standings[team_id] = [played, won, drawn, lost, gf, ga, pts]
         $standings = [];
         foreach (array_keys($teamGroup) as $tid) {
             $standings[$tid] = ['played'=>0,'won'=>0,'drawn'=>0,'lost'=>0,
@@ -419,20 +414,18 @@ switch ($action) {
 
         foreach ($matchRows as $mid => $rows) {
             if (count($rows) < 2) continue;
-            $a = $rows[0];
-            $b = $rows[1];
-            $tidA = (int)$a['team_id'];
-            $tidB = (int)$b['team_id'];
+            $a      = $rows[0];
+            $b      = $rows[1];
+            $tidA   = (int)$a['team_id'];
+            $tidB   = (int)$b['team_id'];
             $goalsA = (int)$a['goals'];
             $goalsB = (int)$b['goals'];
 
-            // Only process teams that are in groups for this category
             if (!isset($standings[$tidA]) || !isset($standings[$tidB])) continue;
 
             $standings[$tidA]['played']++;
             $standings[$tidA]['gf'] += $goalsA;
             $standings[$tidA]['ga'] += $goalsB;
-
             $standings[$tidB]['played']++;
             $standings[$tidB]['gf'] += $goalsB;
             $standings[$tidB]['ga'] += $goalsA;
@@ -449,7 +442,6 @@ switch ($action) {
             }
         }
 
-        // 4. Build response grouped by group_label, sorted by pts desc, gd desc
         $response = [];
         foreach ($groups as $label => $members) {
             $groupStandings = [];
@@ -457,20 +449,19 @@ switch ($action) {
                 $s = $standings[$tid] ?? ['played'=>0,'won'=>0,'drawn'=>0,
                                           'lost'=>0,'gf'=>0,'ga'=>0,'pts'=>0];
                 $groupStandings[] = [
-                    'team_id'    => $tid,
-                    'team_name'  => $tname,
-                    'group'      => $label,
-                    'played'     => $s['played'],
-                    'won'        => $s['won'],
-                    'drawn'      => $s['drawn'],
-                    'lost'       => $s['lost'],
-                    'gf'         => $s['gf'],
-                    'ga'         => $s['ga'],
-                    'gd'         => $s['gf'] - $s['ga'],
-                    'pts'        => $s['pts'],
+                    'team_id'   => $tid,
+                    'team_name' => $tname,
+                    'group'     => $label,
+                    'played'    => $s['played'],
+                    'won'       => $s['won'],
+                    'drawn'     => $s['drawn'],
+                    'lost'      => $s['lost'],
+                    'gf'        => $s['gf'],
+                    'ga'        => $s['ga'],
+                    'gd'        => $s['gf'] - $s['ga'],
+                    'pts'       => $s['pts'],
                 ];
             }
-            // Sort: pts desc → gd desc → gf desc
             usort($groupStandings, function($x, $y) {
                 if ($x['pts'] !== $y['pts']) return $y['pts'] - $x['pts'];
                 if ($x['gd']  !== $y['gd'])  return $y['gd']  - $x['gd'];
@@ -483,11 +474,10 @@ switch ($action) {
         $conn->close();
         break;
 
-    // ── GET QUALIFIERS (GROUP STAGE AWARE) ───────────────────────────
+    // ── GET QUALIFIERS ────────────────────────────────────────────────
     // GET scoring.php?action=get_qualifiers&category_id=4
-    // For soccer: returns top 2 per group ordered by group A→H, rank 1→2.
-    // This gives 16 qualifiers for the R16 bracket in seeded order.
-    // Seeding: Group A 1st, Group B 1st … Group H 1st, Group A 2nd … Group H 2nd
+    // Returns top 2 per group ordered by group A→H, rank 1→2.
+    // Uses bracket_type = 'group' instead of round_id = 1.
     case 'get_qualifiers':
         if ($method !== 'GET') { methodNotAllowed(); break; }
 
@@ -496,7 +486,6 @@ switch ($action) {
 
         $conn = getConnection();
 
-        // Reuse group standings logic inline
         $gStmt = $conn->prepare("
             SELECT group_label, team_id, team_name
             FROM tbl_soccer_groups
@@ -510,18 +499,21 @@ switch ($action) {
 
         $groups2 = []; $teamGroup2 = [];
         foreach ($gRows as $r) {
-            $g = $r['group_label']; $tid = (int)$r['team_id'];
+            $g   = $r['group_label'];
+            $tid = (int)$r['team_id'];
             if (!isset($groups2[$g])) $groups2[$g] = [];
             $groups2[$g][$tid] = $r['team_name'];
-            $teamGroup2[$tid] = $g;
+            $teamGroup2[$tid]  = $g;
         }
 
+        // Use bracket_type = 'group' instead of round_id = 1
         $sStmt = $conn->prepare("
             SELECT s.match_id, s.team_id, s.score_independentscore AS goals
             FROM tbl_score s
-            JOIN tbl_team t ON t.team_id = s.team_id
+            JOIN tbl_team  t ON t.team_id  = s.team_id
+            JOIN tbl_match m ON m.match_id = s.match_id
             WHERE t.category_id = ?
-              AND s.round_id = 1
+              AND m.bracket_type = 'group'
             ORDER BY s.match_id ASC, s.score_id ASC
         ");
         $sStmt->bind_param("i", $category_id);
@@ -543,47 +535,143 @@ switch ($action) {
 
         foreach ($matchRows2 as $mid => $rows) {
             if (count($rows) < 2) continue;
-            $tidA = (int)$rows[0]['team_id']; $goalsA = (int)$rows[0]['goals'];
-            $tidB = (int)$rows[1]['team_id']; $goalsB = (int)$rows[1]['goals'];
+            $tidA   = (int)$rows[0]['team_id']; $goalsA = (int)$rows[0]['goals'];
+            $tidB   = (int)$rows[1]['team_id']; $goalsB = (int)$rows[1]['goals'];
             if (!isset($standings2[$tidA]) || !isset($standings2[$tidB])) continue;
-            $standings2[$tidA]['played']++; $standings2[$tidA]['gf']+=$goalsA; $standings2[$tidA]['ga']+=$goalsB;
-            $standings2[$tidB]['played']++; $standings2[$tidB]['gf']+=$goalsB; $standings2[$tidB]['ga']+=$goalsA;
-            if ($goalsA > $goalsB)      { $standings2[$tidA]['won']++;  $standings2[$tidA]['pts']+=3; $standings2[$tidB]['lost']++; }
-            elseif ($goalsA < $goalsB)  { $standings2[$tidB]['won']++;  $standings2[$tidB]['pts']+=3; $standings2[$tidA]['lost']++; }
-            else                        { $standings2[$tidA]['drawn']++; $standings2[$tidA]['pts']++; $standings2[$tidB]['drawn']++; $standings2[$tidB]['pts']++; }
+            $standings2[$tidA]['played']++; $standings2[$tidA]['gf'] += $goalsA; $standings2[$tidA]['ga'] += $goalsB;
+            $standings2[$tidB]['played']++; $standings2[$tidB]['gf'] += $goalsB; $standings2[$tidB]['ga'] += $goalsA;
+            if ($goalsA > $goalsB)     { $standings2[$tidA]['won']++;  $standings2[$tidA]['pts'] += 3; $standings2[$tidB]['lost']++; }
+            elseif ($goalsA < $goalsB) { $standings2[$tidB]['won']++;  $standings2[$tidB]['pts'] += 3; $standings2[$tidA]['lost']++; }
+            else                       { $standings2[$tidA]['drawn']++; $standings2[$tidA]['pts']++; $standings2[$tidB]['drawn']++; $standings2[$tidB]['pts']++; }
         }
 
-        // Pick top 2 per group
         $firsts = []; $seconds = [];
         foreach ($groups2 as $label => $members) {
             $ranked = [];
             foreach ($members as $tid => $tname) {
-                $s = $standings2[$tid];
-                $ranked[] = ['team_id'=>$tid,'team_name'=>$s['team_name'],
-                             'pts'=>$s['pts'],'gd'=>$s['gf']-$s['ga'],
-                             'gf'=>$s['gf'],'total_score'=>$s['pts'],'group'=>$label];
+                $s        = $standings2[$tid];
+                $ranked[] = ['team_id'    => $tid,
+                             'team_name'  => $s['team_name'],
+                             'pts'        => $s['pts'],
+                             'gd'         => $s['gf'] - $s['ga'],
+                             'gf'         => $s['gf'],
+                             'total_score'=> $s['pts'],
+                             'group'      => $label];
             }
-            usort($ranked, function($x,$y){
-                if ($x['pts']!==$y['pts']) return $y['pts']-$x['pts'];
-                if ($x['gd'] !==$y['gd'])  return $y['gd']-$x['gd'];
-                return $y['gf']-$x['gf'];
+            usort($ranked, function($x, $y) {
+                if ($x['pts'] !== $y['pts']) return $y['pts'] - $x['pts'];
+                if ($x['gd']  !== $y['gd'])  return $y['gd']  - $x['gd'];
+                return $y['gf'] - $x['gf'];
             });
             if (count($ranked) >= 1) $firsts[]  = $ranked[0];
             if (count($ranked) >= 2) $seconds[] = $ranked[1];
         }
 
-        // Seeding: all group winners first, then all runners-up
-        // Within each tier, order by group label (A, B, C...)
         $qualifiers = array_merge($firsts, $seconds);
         echo json_encode($qualifiers);
         $conn->close();
         break;
 
-    // ── CHAMPIONSHIP SUBMIT SCORE ────────────────────────────────────
+    // ── GET KNOCKOUT MATCHES BY ROUND ─────────────────────────────────
+    // GET scoring.php?action=get_knockout_matches&category_id=4&bracket_type=quarter-finals
+    //
+    // Returns all matches for a specific knockout round with both teams,
+    // using real auto-generated match IDs from tbl_match (set by admin).
+    //
+    // bracket_type values:
+    //   elimination, round-of-32, round-of-16, round-of-8,
+    //   quarter-finals, semi-finals, third-place, final
+    case 'get_knockout_matches':
+        if ($method !== 'GET') { methodNotAllowed(); break; }
+
+        $category_id  = isset($_GET['category_id'])  ? intval($_GET['category_id'])  : 0;
+        $bracket_type = isset($_GET['bracket_type'])  ? trim($_GET['bracket_type'])   : '';
+
+        if ($category_id <= 0)    { badRequest('Invalid or missing category_id');  break; }
+        if ($bracket_type === '') { badRequest('Invalid or missing bracket_type'); break; }
+
+        $conn = getConnection();
+
+        // Returns every match of that bracket_type for this category,
+        // with both team slots per match.
+        $stmt = $conn->prepare("
+            SELECT
+                m.match_id,
+                m.bracket_type,
+                TIME_FORMAT(s.schedule_start, '%H:%i') AS match_time,
+                ts.team_id,
+                t.team_name,
+                ts.arena_number,
+                ts.referee_id
+            FROM tbl_match m
+            JOIN tbl_schedule     s  ON s.schedule_id = m.schedule_id
+            JOIN tbl_teamschedule ts ON ts.match_id   = m.match_id
+            JOIN tbl_team         t  ON t.team_id     = ts.team_id
+            WHERE t.category_id  = ?
+              AND m.bracket_type = ?
+            ORDER BY s.schedule_start ASC, m.match_id ASC, ts.teamschedule_id ASC
+        ");
+
+        if (!$stmt) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Prepare failed: ' . $conn->error]);
+            $conn->close();
+            break;
+        }
+
+        $stmt->bind_param("is", $category_id, $bracket_type);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        // Pivot: 2 rows per match_id → one entry with team1 + team2
+        $matches = [];
+        foreach ($rows as $row) {
+            $mid = (int)$row['match_id'];
+            if (!isset($matches[$mid])) {
+                $matches[$mid] = [
+                    'match_id'     => $mid,
+                    'bracket_type' => $row['bracket_type'],
+                    'match_time'   => $row['match_time'],
+                    'arena_number' => (int)$row['arena_number'],
+                    'referee_id'   => (int)$row['referee_id'],
+                    'team1_id'     => null,
+                    'team1_name'   => null,
+                    'team2_id'     => null,
+                    'team2_name'   => null,
+                ];
+            }
+            if ($matches[$mid]['team1_id'] === null) {
+                $matches[$mid]['team1_id']   = (int)$row['team_id'];
+                $matches[$mid]['team1_name'] = $row['team_name'];
+            } else {
+                $matches[$mid]['team2_id']   = (int)$row['team_id'];
+                $matches[$mid]['team2_name'] = $row['team_name'];
+            }
+        }
+
+        echo json_encode(array_values($matches));
+        $conn->close();
+        break;
+
+    // ── CHAMPIONSHIP SUBMIT SCORE ─────────────────────────────────────
     // POST scoring.php?action=championship_submit_score
-    // Same as submit_score but temporarily disables FK checks so that
-    // championship match IDs (101–104, 201–202, 301, 1001–1016) can be
-    // inserted without needing rows in tbl_match.
+    //
+    // Saves a score for a knockout match using the REAL match_id from
+    // tbl_match (as generated by the admin app). round_id is derived
+    // from bracket_type in tbl_match — no hardcoded ID ranges needed.
+    //
+    // Body (JSON):
+    // {
+    //   "match_id": 47,
+    //   "team_id": 12,
+    //   "referee_id": 1,
+    //   "score_independentscore": 3,
+    //   "score_violation": 0,
+    //   "score_totalscore": 3,
+    //   "score_totalduration": "02:35",
+    //   "score_isapproved": 0
+    // }
     case 'championship_submit_score':
         if ($method !== 'POST') { methodNotAllowed(); break; }
 
@@ -592,7 +680,7 @@ switch ($action) {
         if (!$data) { badRequest('Invalid or empty JSON body'); break; }
 
         $required = [
-            'match_id', 'round_id', 'team_id', 'referee_id',
+            'match_id', 'team_id', 'referee_id',
             'score_independentscore', 'score_violation',
             'score_totalscore', 'score_totalduration'
         ];
@@ -611,33 +699,43 @@ switch ($action) {
         $totalDuration    = $data['score_totalduration'];
         $isApproved       = isset($data['score_isapproved']) ? intval($data['score_isapproved']) : 0;
 
-        // Derive the correct round_id from match_id so the DB always reflects
-        // the true round regardless of what the client sends.
-        // Qualification = 1 (handled by submit_score, not this endpoint).
-        //   ELIM   501–512  → round_id 2
-        //   R16   1001–1016 → round_id 2  (same round level as ELIM)
-        //   QF     101–104  → round_id 3
-        //   SF     201–202  → round_id 4
-        //   3RD    401      → round_id 5  (final round, same as FINAL)
-        //   FINAL  301      → round_id 5
-        if (($match_id >= 501 && $match_id <= 512) ||
-            ($match_id >= 1001 && $match_id <= 1016)) {
-            $round_id = 2; // ELIM / R16
-        } elseif ($match_id >= 101 && $match_id <= 104) {
-            $round_id = 3; // Quarter-Final
-        } elseif ($match_id >= 201 && $match_id <= 202) {
-            $round_id = 4; // Semi-Final
-        } elseif ($match_id === 401 || $match_id === 301) {
-            $round_id = 5; // 3rd Place / Final
-        } else {
-            // Fallback: use whatever the client sent
-            $round_id = intval($data['round_id']);
-        }
-
         $conn = getConnection();
 
-        // Disable FK checks so championship match IDs don't need tbl_match rows
-        $conn->query('SET FOREIGN_KEY_CHECKS=0');
+        // Derive round_id from bracket_type in tbl_match — no hardcoded ranges
+        $btStmt = $conn->prepare(
+            "SELECT bracket_type FROM tbl_match WHERE match_id = ? LIMIT 1"
+        );
+        $btStmt->bind_param("i", $match_id);
+        $btStmt->execute();
+        $btRow        = $btStmt->get_result()->fetch_assoc();
+        $btStmt->close();
+        $bracketType  = $btRow['bracket_type'] ?? '';
+
+        // Map bracket_type → round_id
+        // group         → 1  (handled by submit_score, but included for safety)
+        // elimination / round-of-32 / round-of-16 / round-of-8 → 2
+        // quarter-finals → 3
+        // semi-finals    → 4
+        // third-place / final → 5
+        switch ($bracketType) {
+            case 'group':
+                $round_id = 1; break;
+            case 'elimination':
+            case 'round-of-32':
+            case 'round-of-16':
+            case 'round-of-8':
+                $round_id = 2; break;
+            case 'quarter-finals':
+                $round_id = 3; break;
+            case 'semi-finals':
+                $round_id = 4; break;
+            case 'third-place':
+            case 'final':
+                $round_id = 5; break;
+            default:
+                // Fallback: use client-supplied round_id if bracket_type unknown
+                $round_id = isset($data['round_id']) ? intval($data['round_id']) : 1;
+        }
 
         $stmt = $conn->prepare("
             INSERT INTO tbl_score (
@@ -651,10 +749,15 @@ switch ($action) {
                 team_id,
                 referee_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                score_independentscore = VALUES(score_independentscore),
+                score_violation        = VALUES(score_violation),
+                score_totalscore       = VALUES(score_totalscore),
+                score_totalduration    = VALUES(score_totalduration),
+                score_isapproved       = VALUES(score_isapproved)
         ");
 
         if (!$stmt) {
-            $conn->query('SET FOREIGN_KEY_CHECKS=1');
             http_response_code(500);
             echo json_encode(['error' => 'Prepare failed: ' . $conn->error]);
             $conn->close();
@@ -669,14 +772,15 @@ switch ($action) {
         );
 
         $ok = $stmt->execute();
-        $conn->query('SET FOREIGN_KEY_CHECKS=1'); // always re-enable
 
         if ($ok) {
             http_response_code(201);
             echo json_encode([
-                'success'  => true,
-                'score_id' => $conn->insert_id,
-                'message'  => 'Championship score submitted successfully'
+                'success'      => true,
+                'score_id'     => $conn->insert_id,
+                'round_id'     => $round_id,
+                'bracket_type' => $bracketType,
+                'message'      => 'Championship score submitted successfully'
             ]);
         } else {
             http_response_code(500);

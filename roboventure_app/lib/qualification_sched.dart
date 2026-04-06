@@ -45,6 +45,7 @@ class ScheduleEntry {
   final int    awayTeamId;
   final String homeTeamName;
   final String awayTeamName;
+  final String bracketType;  // e.g. 'group', 'quarter-finals', 'final', etc.
 
   const ScheduleEntry({
     required this.teamscheduleId,
@@ -58,6 +59,7 @@ class ScheduleEntry {
     this.awayTeamId   = 0,
     this.homeTeamName = '',
     this.awayTeamName = '',
+    this.bracketType  = '',
   });
 
   factory ScheduleEntry.fromJson(Map<String, dynamic> json) {
@@ -77,6 +79,7 @@ class ScheduleEntry {
       teamName:       (json['team_name'] ?? 'Unknown Team').toString(),
       refereeId:      safeInt(json['referee_id']),
       arenaNumber:    safeInt(json['arena_number']),
+      bracketType:    (json['bracket_type'] ?? '').toString(),
     );
   }
 }
@@ -131,16 +134,57 @@ class _ScheduleApiService {
     }
   }
 
-  // Fetch ALL matches for category — no arena filter.
-  // The mobile app groups by arena_number from the DB itself.
-  static Future<List<ScheduleEntry>> fetchSchedule(int categoryId) async {
-    final url = Uri.parse(
-      '${ApiConfig.getTeamSchedule}?category_id=$categoryId',
-    );
+  // Fetch qualification-round matches for a category.
+  //
+  // Soccer uses bracket_type = 'group' — filter at both DB and client level
+  // so championship knockout rounds don't bleed in.
+  //
+  // All other categories only have qualification matches (no group stage),
+  // so we fetch everything for the category and exclude known championship
+  // bracket types client-side.
+  static const _championshipBrackets = {
+    'elimination',
+    'round-of-32',
+    'round-of-16',
+    'round-of-8',
+    'quarter-finals',
+    'semi-finals',
+    'third-place',
+    'final',
+  };
+
+  static Future<List<ScheduleEntry>> fetchSchedule(
+      int categoryId, {bool isSoccer = false}) async {
+    final Uri url;
+    if (isSoccer) {
+      // Soccer: request only group-stage matches from the server.
+      url = Uri.parse(
+        '${ApiConfig.getTeamSchedule}?category_id=$categoryId&bracket_type=group',
+      );
+    } else {
+      // Other categories: fetch all matches; championship rounds are
+      // excluded client-side below.
+      url = Uri.parse(
+        '${ApiConfig.getTeamSchedule}?category_id=$categoryId',
+      );
+    }
+
     final response = await http.get(url).timeout(const Duration(seconds: 10));
     if (response.statusCode == 200) {
       final List<dynamic> data = json.decode(response.body);
-      final entries = data.map((j) => ScheduleEntry.fromJson(j)).toList();
+      final entries = data
+          .map((j) => ScheduleEntry.fromJson(j))
+          .where((e) {
+            if (isSoccer) {
+              // Soccer: keep only group-stage entries (belt-and-suspenders).
+              return e.bracketType == 'group';
+            } else {
+              // Other categories: drop any championship-bracket rows so this
+              // screen never shows knockout matches.
+              return !_championshipBrackets.contains(e.bracketType);
+            }
+          })
+          .toList();
       entries.sort((a, b) {
         final byMatch = a.matchId.compareTo(b.matchId);
         if (byMatch != 0) return byMatch;
@@ -151,26 +195,42 @@ class _ScheduleApiService {
     throw Exception('get_teamschedule failed [${response.statusCode}]');
   }
 
-  static Future<Set<String>> fetchScoredMatchIds(int categoryId) async {
+  // Qualification-only scored match IDs.
+  //
+  // Soccer    → keep only bracket_type = 'group'.
+  // Non-soccer → exclude championship bracket types; keep everything else
+  //              (qualification matches for other categories have their own
+  //               bracket_type or 'group', but never knockout labels).
+  static Future<Set<String>> fetchScoredMatchIds(
+      int categoryId, {bool isSoccer = false}) async {
     final url = Uri.parse('${ApiConfig.getScoredMatches}?category_id=$categoryId');
     try {
       final response = await http.get(url).timeout(const Duration(seconds: 10));
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
-        return data.map((j) {
-          final matchId = j['match_id']?.toString() ?? '0';
-          final teamId  = j['team_id']?.toString()  ?? '0';
-          // ignore: unnecessary_brace_in_string_interps
-          return '${matchId}_${teamId}';
-        }).toSet();
+        return data
+            .where((j) {
+              final bt = j['bracket_type']?.toString() ?? '';
+              if (isSoccer) return bt == 'group';
+              return !_championshipBrackets.contains(bt);
+            })
+            .map((j) {
+              final matchId = j['match_id']?.toString() ?? '0';
+              final teamId  = j['team_id']?.toString()  ?? '0';
+              return '${matchId}_${teamId}';
+            })
+            .toSet();
       }
     } catch (_) {}
     return {};
   }
 
-  /// Returns a map of  "matchId_teamId" → score (int)
-  /// Reuses the same getScoredMatches endpoint — expects a `score` field.
-  static Future<Map<String, int>> fetchScoreMap(int categoryId) async {
+  /// Returns a map of "matchId_teamId" → score (int).
+  ///
+  /// Soccer    → bracket_type = 'group' only.
+  /// Non-soccer → excludes championship brackets (qualification rounds only).
+  static Future<Map<String, int>> fetchScoreMap(
+      int categoryId, {bool isSoccer = false}) async {
     final url = Uri.parse('${ApiConfig.getScoredMatches}?category_id=$categoryId');
     try {
       final response = await http.get(url).timeout(const Duration(seconds: 10));
@@ -178,6 +238,12 @@ class _ScheduleApiService {
         final List<dynamic> data = json.decode(response.body);
         final Map<String, int> map = {};
         for (final j in data) {
+          final bt = j['bracket_type']?.toString() ?? '';
+          if (isSoccer) {
+            if (bt != 'group') continue;
+          } else {
+            if (_championshipBrackets.contains(bt)) continue;
+          }
           final matchId = j['match_id']?.toString() ?? '0';
           final teamId  = j['team_id']?.toString()  ?? '0';
           final score   = int.tryParse(j['score_totalscore']?.toString() ?? '0') ?? 0;
@@ -219,7 +285,7 @@ class QualificationScheduleScreen extends StatefulWidget {
 
 class _QualificationScheduleScreenState
     extends State<QualificationScheduleScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
 
   List<ArenaInfo> _arenas        = [];
   bool            _arenasLoading = true;
@@ -247,8 +313,8 @@ class _QualificationScheduleScreenState
 
   Future<void> _refreshScoredIds() async {
     final results = await Future.wait([
-      _ScheduleApiService.fetchScoredMatchIds(widget.categoryId),
-      _ScheduleApiService.fetchScoreMap(widget.categoryId),
+      _ScheduleApiService.fetchScoredMatchIds(widget.categoryId, isSoccer: _soccer),
+      _ScheduleApiService.fetchScoreMap(widget.categoryId, isSoccer: _soccer),
     ]);
     if (mounted) {
       setState(() {
@@ -262,13 +328,15 @@ class _QualificationScheduleScreenState
     setState(() { _arenasLoading = true; _arenasError = null; });
     try {
       final arenas = await _ScheduleApiService.fetchArenas(widget.categoryId);
-      _tabController?.dispose();
+      final oldCtrl = _tabController;
       final tc = TabController(length: arenas.length, vsync: this);
       setState(() {
         _arenas        = arenas;
         _tabController = tc;
         _arenasLoading = false;
       });
+      // Dispose old controller AFTER the frame rebuilds with the new one
+      WidgetsBinding.instance.addPostFrameCallback((_) => oldCtrl?.dispose());
       if (arenas.isNotEmpty) _ensureSchedule();
       tc.addListener(() {
         if (!tc.indexIsChanging) _ensureSchedule();
@@ -283,7 +351,7 @@ class _QualificationScheduleScreenState
     if (!_scheduleFutures.containsKey(0)) {
       setState(() {
         _scheduleFutures[0] =
-            _ScheduleApiService.fetchSchedule(widget.categoryId);
+            _ScheduleApiService.fetchSchedule(widget.categoryId, isSoccer: _soccer);
       });
     }
   }
@@ -291,7 +359,7 @@ class _QualificationScheduleScreenState
   Future<void> _refreshSchedule([int? arenaNumber]) async {
     setState(() {
       _scheduleFutures[0] =
-          _ScheduleApiService.fetchSchedule(widget.categoryId);
+          _ScheduleApiService.fetchSchedule(widget.categoryId, isSoccer: _soccer);
     });
     await Future.wait([
       _scheduleFutures[0]!,
@@ -481,26 +549,52 @@ class _QualificationScheduleScreenState
           child: CircularProgressIndicator(color: _accentColor));
     }
     if (_arenasError != null) {
-      return Center(child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.error_outline, color: Colors.red, size: 40),
-          const SizedBox(height: 12),
-          Text(_arenasError!, textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12)),
-          const SizedBox(height: 16),
-          ElevatedButton.icon(
-            onPressed: _loadArenas,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Retry'),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: _accentColor, foregroundColor: Colors.white),
+      return LayoutBuilder(
+        builder: (context, constraints) => RefreshIndicator(
+          onRefresh: _loadArenas,
+          color: _accentColor,
+          backgroundColor: Colors.white,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: SizedBox(
+              height: constraints.maxHeight,
+              child: Center(child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.red, size: 40),
+                  const SizedBox(height: 12),
+                  Text(_arenasError!, textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 12)),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: _loadArenas,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: _accentColor, foregroundColor: Colors.white),
+                  ),
+                ],
+              )),
+            ),
           ),
-        ],
-      ));
+        ),
+      );
     }
     if (_arenas.isEmpty) {
-      return const Center(child: Text('No arenas found for this category.'));
+      return LayoutBuilder(
+        builder: (context, constraints) => RefreshIndicator(
+          onRefresh: _loadArenas,
+          color: _accentColor,
+          backgroundColor: Colors.white,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: SizedBox(
+              height: constraints.maxHeight,
+              child: const Center(child: Text('No matches found for this category.')),
+            ),
+          ),
+        ),
+      );
     }
 
     return TabBarView(
@@ -632,41 +726,45 @@ class _ArenaScheduleView extends StatelessWidget {
           }
 
           if (snapshot.hasError) {
-            return SingleChildScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              child: SizedBox(height: 400, child: Center(child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.red, size: 36),
-                  const SizedBox(height: 10),
-                  Text('${snapshot.error}', textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 12)),
-                  const SizedBox(height: 12),
-                  ElevatedButton.icon(
-                    onPressed: onRefresh,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Pull down or tap to retry'),
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: _accentColor,
-                        foregroundColor: Colors.white),
-                  ),
-                ],
-              ))),
+            return LayoutBuilder(
+              builder: (context, constraints) => SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: SizedBox(height: constraints.maxHeight, child: Center(child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.error_outline, color: Colors.red, size: 36),
+                    const SizedBox(height: 10),
+                    Text('${snapshot.error}', textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 12)),
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      onPressed: onRefresh,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Pull down or tap to retry'),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: _accentColor,
+                          foregroundColor: Colors.white),
+                    ),
+                  ],
+                ))),
+              ),
             );
           }
 
           if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return SingleChildScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              child: const SizedBox(height: 400, child: Center(child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.event_busy, color: Colors.grey, size: 40),
-                  SizedBox(height: 10),
-                  Text('No matches scheduled for this arena.',
-                      style: TextStyle(color: Colors.grey)),
-                ],
-              ))),
+            return LayoutBuilder(
+              builder: (context, constraints) => SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: SizedBox(height: constraints.maxHeight, child: const Center(child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.event_busy, color: Colors.grey, size: 40),
+                    SizedBox(height: 10),
+                    Text('No matches scheduled for this arena.',
+                        style: TextStyle(color: Colors.grey)),
+                  ],
+                ))),
+              ),
             );
           }
 
@@ -765,39 +863,33 @@ class _SoccerMatchTable extends StatelessWidget {
   }
 
   // ── W / L / D badge helper ───────────────────────────────────────────────
-  Widget _resultBadge(String label) {
-    final Color bg;
-    final Color border;
-    final Color text;
-
-    switch (label) {
-      case 'W':
-        bg     = const Color(0xFF1B5E20).withOpacity(0.85);
-        border = Colors.greenAccent;
-        text   = Colors.greenAccent;
-        break;
-      case 'L':
-        bg     = const Color(0xFFB71C1C).withOpacity(0.75);
-        border = Colors.redAccent;
-        text   = Colors.redAccent.shade100;
-        break;
-      default: // 'D'
-        bg     = const Color(0xFF424242).withOpacity(0.80);
-        border = Colors.white54;
-        text   = Colors.white70;
-    }
-
+  Widget _resultBadge(String result) {
+    final Color bg = result == 'W'
+        ? const Color(0xFF1B5E20).withOpacity(0.55)
+        : result == 'L'
+            ? const Color(0xFFB71C1C).withOpacity(0.55)
+            : const Color(0xFF424242).withOpacity(0.55);
+    final Color borderCol = result == 'W'
+        ? Colors.greenAccent
+        : result == 'L'
+            ? Colors.redAccent
+            : Colors.white54;
+    final Color textCol = result == 'W'
+        ? Colors.greenAccent
+        : result == 'L'
+            ? Colors.redAccent.shade100
+            : Colors.white70;
     return Container(
-      width: 24, height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: bg,
-        shape: BoxShape.circle,
-        border: Border.all(color: border, width: 1.5),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: borderCol, width: 1),
       ),
       alignment: Alignment.center,
-      child: Text(label,
+      child: Text(result,
           style: TextStyle(
-              color: text, fontSize: 10, fontWeight: FontWeight.w900)),
+              color: textCol, fontSize: 9, fontWeight: FontWeight.w900)),
     );
   }
 
@@ -875,98 +967,60 @@ class _SoccerMatchTable extends StatelessWidget {
                       style: const TextStyle(color: Colors.white,
                           fontSize: 28, fontWeight: FontWeight.w900)),
                 )),
-                // ── Home team + W/L/D badge + score ─────────────────────
+                // ── Home team (W/L/D now beside VS badge) ───────────────
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          if (homeLabel.isNotEmpty) ...[
-                            _resultBadge(homeLabel),
-                            const SizedBox(width: 6),
-                          ],
-                          Expanded(child: Text(
-                            m.home.isNotEmpty ? m.home : 'TBD',
-                            maxLines: 2, overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: m.home.isNotEmpty ? Colors.white : Colors.white38,
-                              fontSize: 13, fontWeight: FontWeight.w700, height: 1.3,
-                            ),
-                          )),
-                        ],
-                      ),
-                      if (m.isScored) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          '${m.homeScore} pts',
-                          style: TextStyle(
-                            color: homeLabel == 'W'
-                                ? Colors.greenAccent
-                                : homeLabel == 'L'
-                                    ? Colors.redAccent.shade100
-                                    : Colors.white60,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
-                    ],
+                  child: Text(
+                    m.home.isNotEmpty ? m.home : 'TBD',
+                    maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: m.home.isNotEmpty ? Colors.white : Colors.white38,
+                      fontSize: 13, fontWeight: FontWeight.w700, height: 1.3,
+                    ),
                   ),
                 ),
-                // VS pill
-                SizedBox(width: 40, child: Center(child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 6, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: Colors.white30),
-                  ),
-                  child: const Text('vs', textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white,
-                          fontSize: 10, fontWeight: FontWeight.w900)),
-                ))),
-                // ── Away team + W/L/D badge + score ─────────────────────
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          Expanded(child: Text(
-                            m.away.isNotEmpty ? m.away : 'TBD',
-                            textAlign: TextAlign.right,
-                            maxLines: 2, overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: m.away.isNotEmpty ? Colors.white : Colors.white38,
-                              fontSize: 13, fontWeight: FontWeight.w700, height: 1.3,
-                            ),
-                          )),
-                          if (awayLabel.isNotEmpty) ...[
-                            const SizedBox(width: 6),
-                            _resultBadge(awayLabel),
-                          ],
-                        ],
+                // Home W/L/D | VS/score | Away W/L/D — all in one row
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (m.isScored && homeLabel.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 5),
+                        child: _resultBadge(homeLabel),
                       ),
-                      if (m.isScored) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          '${m.awayScore} pts',
-                          textAlign: TextAlign.right,
-                          style: TextStyle(
-                            color: awayLabel == 'W'
-                                ? Colors.greenAccent
-                                : awayLabel == 'L'
-                                    ? Colors.redAccent.shade100
-                                    : Colors.white60,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
-                    ],
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.white30),
+                      ),
+                      child: m.isScored
+                          ? Text('${m.homeScore}-${m.awayScore}',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.white,
+                                  fontSize: 10, fontWeight: FontWeight.w900))
+                          : const Text('vs', textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.white,
+                                  fontSize: 10, fontWeight: FontWeight.w900)),
+                    ),
+                    if (m.isScored && awayLabel.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 5),
+                        child: _resultBadge(awayLabel),
+                      ),
+                  ],
+                ),
+                // ── Away team (W/L/D now beside VS badge) ──────────────
+                Expanded(
+                  child: Text(
+                    m.away.isNotEmpty ? m.away : 'TBD',
+                    textAlign: TextAlign.right,
+                    maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: m.away.isNotEmpty ? Colors.white : Colors.white38,
+                      fontSize: 13, fontWeight: FontWeight.w700, height: 1.3,
+                    ),
                   ),
                 ),
               ],

@@ -7,6 +7,8 @@ import 'dart:ui' as ui;
 import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
+import 'dart:math';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/rendering.dart';
 import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
@@ -139,14 +141,21 @@ class SoccerScoringApiService {
     // since their match IDs don't exist in tbl_match.
     final action = isChampionship ? 'championship_submit_score' : 'submit_score';
     final url = Uri.parse('${ApiConfig.scoring}?action=$action');
+
+    // score_totalscore = this team's own score minus their violations.
+    // For soccer there are no fouls tracked so this always equals teamAScore,
+    // but the formula is kept generic for correctness.
+    final int violations  = teamAFouls + teamBFouls;
+    final int totalScore  = teamAScore - violations;
+
     final res = await http.post(url,
       headers: {'Content-Type': 'application/json'},
       body: json.encode({
         'match_id': matchId, 'round_id': roundId, 'team_id': teamId,
         'referee_id': refereeId,
         'score_independentscore': teamAScore,
-        'score_violation':        teamAFouls + teamBFouls,
-        'score_totalscore':       teamBScore,
+        'score_violation':        violations,
+        'score_totalscore':       totalScore,
         'score_totalduration':    totalDuration,
         'score_isapproved':       0,
       }),
@@ -224,16 +233,106 @@ class _SigPainter extends CustomPainter {
 // ─────────────────────────────────────────────
 // COLORS
 // ─────────────────────────────────────────────
-const Color _purple      = Color(0xFF7D58B3);
-const Color _penaltyRed  = Color(0xFFB35D65);
-const Color _bgGrey      = Color(0xFFF2F2F2);
-const Color _saveGreen   = Color(0xFF5E975E);
+const Color _purple        = Color(0xFF7D58B3);
+const Color _penaltyRed    = Color(0xFFB35D65);
+const Color _bgGrey        = Color(0xFFF2F2F2);
+const Color _saveGreen     = Color(0xFF5E975E);
 const Color _confirmPurple = Color(0xFF3B1F6E);
-const Color _startGreen  = Color(0xFF4CAF50);
-const Color _pauseRed    = Color(0xFFE53935);
-const Color _resetPurple = Color(0xFF79569A);
-const Color _teamAColor  = Color(0xFF3A7BD5);
-const Color _teamBColor  = Color(0xFF2E8B57);
+const Color _startGreen    = Color(0xFF4CAF50);
+const Color _pauseRed      = Color(0xFFE53935);
+const Color _resetPurple   = Color(0xFF79569A);
+const Color _swapGold    = Color(0xFFFFBF00);
+const Color _teamBlue      = Color(0xFF3A7BD5);
+const Color _teamGreen     = Color(0xFF2E8B57);
+
+// ─────────────────────────────────────────────
+// TEAM COLOR ASSIGNMENT
+// Persisted to SharedPreferences so it survives app crashes/restarts.
+// Key format: "soccer_color_<matchId>" → "blue" | "green"
+// Value is what the HOME team got; away gets the other one.
+// ─────────────────────────────────────────────
+class _ColorAssignment {
+  /// true  = home is Blue,  away is Green
+  /// false = home is Green, away is Blue
+  final bool homeIsBlue;
+
+  const _ColorAssignment({required this.homeIsBlue});
+
+  Color get homeColor => homeIsBlue ? _teamBlue  : _teamGreen;
+  Color get awayColor => homeIsBlue ? _teamGreen : _teamBlue;
+  String get homeLabel => homeIsBlue ? 'BLUE'  : 'GREEN';
+  String get awayLabel => homeIsBlue ? 'GREEN' : 'BLUE';
+
+  _ColorAssignment swapped() => _ColorAssignment(homeIsBlue: !homeIsBlue);
+
+  // ── Persistence ───────────────────────────────────────────────────
+  static String _key(int matchId) => 'soccer_color_$matchId';
+
+  /// Load from prefs. Returns null if no assignment saved yet.
+  static Future<_ColorAssignment?> load(int matchId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final val   = prefs.getString(_key(matchId));
+    if (val == null) return null;
+    return _ColorAssignment(homeIsBlue: val == 'blue');
+  }
+
+  /// Randomly pick and immediately save.
+  static Future<_ColorAssignment> createAndSave(int matchId) async {
+    final homeIsBlue = Random().nextBool();
+    final assignment = _ColorAssignment(homeIsBlue: homeIsBlue);
+    await assignment.save(matchId);
+    return assignment;
+  }
+
+  /// Save current assignment.
+  Future<void> save(int matchId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_key(matchId), homeIsBlue ? 'blue' : 'green');
+  }
+}
+
+// ─────────────────────────────────────────────
+// MATCH STATE PERSISTENCE
+// Saves scores + timer to SharedPreferences on every change.
+// Key prefix: "soccer_state_<matchId>_<field>"
+// ─────────────────────────────────────────────
+class _MatchStatePersistence {
+  static String _k(int matchId, String field) => 'soccer_state_${matchId}_$field';
+
+  static Future<void> save({
+    required int matchId,
+    required int teamAScore,
+    required int teamBScore,
+    required int remainingSeconds,
+    required bool hasStarted,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_k(matchId, 'scoreA'),    teamAScore);
+    await prefs.setInt(_k(matchId, 'scoreB'),    teamBScore);
+    await prefs.setInt(_k(matchId, 'timer'),     remainingSeconds);
+    await prefs.setBool(_k(matchId, 'started'),  hasStarted);
+  }
+
+  static Future<Map<String, dynamic>?> load(int matchId) async {
+    final prefs = await SharedPreferences.getInstance();
+    // If no saved state exists yet, return null
+    if (!prefs.containsKey(_k(matchId, 'scoreA'))) return null;
+    return {
+      'scoreA':   prefs.getInt(_k(matchId, 'scoreA'))   ?? 0,
+      'scoreB':   prefs.getInt(_k(matchId, 'scoreB'))   ?? 0,
+      'timer':    prefs.getInt(_k(matchId, 'timer'))    ?? 300,
+      'started':  prefs.getBool(_k(matchId, 'started')) ?? false,
+    };
+  }
+
+  static Future<void> clear(int matchId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_k(matchId, 'scoreA'));
+    await prefs.remove(_k(matchId, 'scoreB'));
+    await prefs.remove(_k(matchId, 'timer'));
+    await prefs.remove(_k(matchId, 'started'));
+  }
+}
 
 // ─────────────────────────────────────────────
 // SOCCER SCORING PAGE
@@ -245,22 +344,19 @@ class SoccerScoringPage extends StatefulWidget {
   final int    refereeId;
   final String homeTeamName;
   final String awayTeamName;
-
-  final bool isChampionship;
-  /// The DB round_id for this championship match (2=ELIM/R16, 3=QF, 4=SF, 5=Final).
-  /// Ignored when isChampionship is false (qualification always uses round_id 1).
-  final int  championshipRoundId;
+  final bool   isChampionship;
+  final int?   championshipRoundId;
 
   const SoccerScoringPage({
     super.key,
     required this.matchId,
     required this.teamId,
-    this.awayTeamId         = 0,
+    this.awayTeamId          = 0,
     required this.refereeId,
-    this.homeTeamName       = '',
-    this.awayTeamName       = '',
-    this.isChampionship     = false,
-    this.championshipRoundId = 1,
+    this.homeTeamName        = '',
+    this.awayTeamName        = '',
+    this.isChampionship      = false,
+    this.championshipRoundId,
   });
 
   @override
@@ -276,12 +372,19 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
   int teamBScore = 0;
 
   bool _timerRunning = false;
+  bool _hasStarted = false; // true once Start is pressed for the first time
+  bool _overtimeConfirmed = false; // true if referee chose to extend after tie
   int _remainingSeconds = 300;
   final int _totalSeconds = 300;
   Timer? _timer;
 
+  bool get _timerEnded => _hasStarted && _remainingSeconds == 0;
+
   bool _loading = true;
   String? _errorMsg;
+
+  // ── Team color assignment ─────────────────────────────────────────
+  _ColorAssignment? _colors; // null only during initial async load
 
   SoccerMatchInfo?      _match;
   SoccerTeamInfo?       _team;
@@ -294,9 +397,18 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!_timerRunning) return;
       setState(() {
-        if (_remainingSeconds > 0) _remainingSeconds--;
-        else { _timerRunning = false; _timer?.cancel(); }
+        if (_remainingSeconds > 0) {
+          _remainingSeconds--;
+        } else {
+          _timerRunning = false;
+          _timer?.cancel();
+          // Check for tie when timer naturally reaches 0
+          if (teamAScore == teamBScore && !_overtimeConfirmed && mounted) {
+            WidgetsBinding.instance.addPostFrameCallback((_) => _showOvertimeDialog());
+          }
+        }
       });
+      _saveMatchState();
     });
   }
 
@@ -310,8 +422,39 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
-    // Hide status bar and navigation bar for full screen
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _initColorAndData();
+  }
+
+  /// Persist current scores + timer to disk. Called on every change.
+  Future<void> _saveMatchState() => _MatchStatePersistence.save(
+    matchId:          widget.matchId,
+    teamAScore:       teamAScore,
+    teamBScore:       teamBScore,
+    remainingSeconds: _remainingSeconds,
+    hasStarted:       _hasStarted,
+  );
+
+  /// Load persisted color assignment (or create+save a new random one),
+  /// restore scores/timer if available, then fetch match data.
+  Future<void> _initColorAndData() async {
+    // 1. Color assignment
+    final existing = await _ColorAssignment.load(widget.matchId);
+    final colors   = existing ?? await _ColorAssignment.createAndSave(widget.matchId);
+
+    // 2. Restore match state if a previous session saved one
+    final saved = await _MatchStatePersistence.load(widget.matchId);
+    if (mounted) {
+      setState(() {
+        _colors = colors;
+        if (saved != null) {
+          teamAScore        = saved['scoreA'] as int;
+          teamBScore        = saved['scoreB'] as int;
+          _remainingSeconds = saved['timer']  as int;
+          _hasStarted       = saved['started'] as bool;
+        }
+      });
+    }
     _fetchAllData();
   }
 
@@ -353,12 +496,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                   categoryId: 0,
                 )
               : null;
-          // Select the round matching the championship match's round_id.
-          // Falls back to rounds.first if not found (should never happen).
-          _selectedRound = rounds.cast<SoccerRoundInfo?>().firstWhere(
-            (r) => r?.roundId == widget.championshipRoundId,
-            orElse: () => rounds.isNotEmpty ? rounds.first : null,
-          );
+          _selectedRound = rounds.isNotEmpty ? rounds.first : null;
           _loading = false;
         });
         return;
@@ -422,7 +560,54 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
   }
 
   Future<void> _submitScore(BuildContext ctx) async {
-    if (_selectedRound == null) {
+    // ── Validation 1: Timer never started ─────────────────────────
+    if (!_hasStarted) {
+      _showValidationDialog(
+        icon: Icons.timer_off_outlined,
+        iconColor: Colors.orangeAccent,
+        title: 'MATCH NOT STARTED',
+        message: 'The timer was never started. Please start the match before submitting scores.',
+      );
+      return;
+    }
+
+    // ── Validation 2: Timer elapsed = 0 (started but no time played) ─
+    final elapsed = _totalSeconds - _remainingSeconds;
+    if (elapsed == 0) {
+      _showValidationDialog(
+        icon: Icons.timer_off_outlined,
+        iconColor: Colors.orangeAccent,
+        title: 'NO TIME ELAPSED',
+        message: 'No match time has been recorded. Start and play the match before submitting.',
+      );
+      return;
+    }
+
+    // ── Validation 3: Empty signatures ────────────────────────────
+    final captainSigned = _captainDelegate.points.any((p) => p != null);
+    final refereeSigned = _refereeDelegate.points.any((p) => p != null);
+    if (!captainSigned || !refereeSigned) {
+      _showValidationDialog(
+        icon: Icons.draw_outlined,
+        iconColor: _penaltyRed,
+        title: 'SIGNATURES REQUIRED',
+        message: !captainSigned && !refereeSigned
+            ? 'Both the captain and referee signatures are required before submitting.'
+            : !captainSigned
+                ? 'The captain signature is missing. Please have the captain sign before submitting.'
+                : 'The referee signature is missing. Please sign before submitting.',
+      );
+      return;
+    }
+
+    // ── Validation 4: Tied + timer ended, not yet confirmed ───────
+    if (_timerEnded && teamAScore == teamBScore && !_overtimeConfirmed) {
+      _showOvertimeDialog();
+      Navigator.pop(ctx); // close the summary popup so dialog is on top
+      return;
+    }
+
+    if (_selectedRound == null && widget.championshipRoundId == null) {
       ScaffoldMessenger.of(ctx).showSnackBar(
           const SnackBar(content: Text('Please select Competition Info.')));
       return;
@@ -431,11 +616,10 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
     showDialog(context: context, barrierDismissible: false,
         builder: (_) => const Center(child: CircularProgressIndicator()));
 
-    final elapsed = _totalSeconds - _remainingSeconds;
     final dur = '${(elapsed ~/ 60).toString().padLeft(2,'0')}:${(elapsed % 60).toString().padLeft(2,'0')}';
 
     final homeOk = await SoccerScoringApiService.submitScore(
-      matchId: widget.matchId, roundId: _selectedRound!.roundId,
+      matchId: widget.matchId, roundId: widget.championshipRoundId ?? _selectedRound!.roundId,
       teamId: widget.teamId, refereeId: widget.refereeId,
       teamAScore: teamAScore, teamBScore: teamBScore,
       teamAFouls: 0, teamBFouls: 0, totalDuration: dur,
@@ -443,10 +627,15 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
     );
     bool awayOk = true;
     if (widget.awayTeamId > 0) {
+      // For the away team row: pass the away team's own score as teamAScore.
+      // submitScore always uses teamAScore as score_independentscore and
+      // score_totalscore = teamAScore - violations, so each team gets
+      // their own correct score stored — never the opponent's.
       awayOk = await SoccerScoringApiService.submitScore(
-        matchId: widget.matchId, roundId: _selectedRound!.roundId,
+        matchId: widget.matchId, roundId: widget.championshipRoundId ?? _selectedRound!.roundId,
         teamId: widget.awayTeamId, refereeId: widget.refereeId,
-        teamAScore: teamBScore, teamBScore: teamAScore,
+        teamAScore: teamBScore,  // ✅ away team's OWN score
+        teamBScore: teamAScore,  // unused in payload — kept for API signature
         teamAFouls: 0, teamBFouls: 0, totalDuration: dur,
         isChampionship: widget.isChampionship,
       );
@@ -454,6 +643,9 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
     if (!mounted) return;
     rootNav.pop(); // dismiss loading dialog
     if (homeOk && awayOk) {
+      // Clear saved state — match is done, next open should start fresh
+      await _MatchStatePersistence.clear(widget.matchId);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Score submitted!'), backgroundColor: _saveGreen));
       Navigator.pop(ctx);           // close the MATCH SUMMARY dialog
@@ -462,6 +654,151 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Submission failed.'), backgroundColor: _penaltyRed));
     }
+  }
+
+  // Generic validation error dialog
+  void _showValidationDialog({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String message,
+  }) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+              color: _purple, borderRadius: BorderRadius.circular(20)),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                color: iconColor.withOpacity(0.15),
+                shape: BoxShape.circle,
+                border: Border.all(color: iconColor, width: 2),
+              ),
+              child: Icon(icon, color: iconColor, size: 26),
+            ),
+            const SizedBox(height: 14),
+            Text(title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white,
+                    fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+            const SizedBox(height: 8),
+            Text(message,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white.withOpacity(0.7),
+                    fontSize: 11, height: 1.5)),
+            const SizedBox(height: 20),
+            GestureDetector(
+              onTap: () => Navigator.pop(ctx),
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                    color: iconColor, borderRadius: BorderRadius.circular(12)),
+                child: const Text('OK',
+                    style: TextStyle(color: Colors.white,
+                        fontSize: 14, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  // Overtime / extra time dialog — shown when timer ends and scores are tied
+  void _showOvertimeDialog() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+              color: _purple, borderRadius: BorderRadius.circular(20)),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            // Icon
+            Container(
+              width: 56, height: 56,
+              decoration: BoxDecoration(
+                color: Colors.orangeAccent.withOpacity(0.2),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.orangeAccent, width: 2),
+              ),
+              child: const Icon(Icons.sports_soccer,
+                  color: Colors.orangeAccent, size: 28),
+            ),
+            const SizedBox(height: 14),
+            const Text("TIME'S UP — IT'S A TIE!",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white, fontSize: 15,
+                    fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+            const SizedBox(height: 6),
+            Text('$teamAScore  –  $teamBScore',
+                style: const TextStyle(color: Colors.orangeAccent,
+                    fontSize: 28, fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic)),
+            const SizedBox(height: 8),
+            Text('What would you like to do?',
+                style: TextStyle(color: Colors.white.withOpacity(0.65),
+                    fontSize: 11)),
+            const SizedBox(height: 20),
+            // EXTEND — set extra time via SET dialog
+            GestureDetector(
+              onTap: () {
+                Navigator.pop(ctx);
+                _showSetTimerDialog(); // referee sets extra time manually
+              },
+              child: Container(
+                width: double.infinity, height: 46,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                    color: Colors.orangeAccent,
+                    borderRadius: BorderRadius.circular(12)),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.add_circle_outline_rounded,
+                        color: Colors.white, size: 18),
+                    SizedBox(width: 8),
+                    Text('EXTEND TIME',
+                        style: TextStyle(color: Colors.white,
+                            fontSize: 14, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            // ACCEPT TIE — proceed to submit as-is
+            GestureDetector(
+              onTap: () {
+                setState(() => _overtimeConfirmed = true);
+                Navigator.pop(ctx);
+              },
+              child: Container(
+                width: double.infinity, height: 46,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white30),
+                ),
+                child: const Text('ACCEPT TIE RESULT',
+                    style: TextStyle(color: Colors.white,
+                        fontSize: 14, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   // SET button → edit timer dialog
@@ -580,6 +917,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                   setState(() {
                     _remainingSeconds = (tempMinutes * 60) + tempSeconds;
                   });
+                  _saveMatchState();
                   Navigator.pop(ctx);
                 },
                 child: Container(
@@ -688,7 +1026,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
   // ─────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Scaffold(
+    if (_loading || _colors == null) return const Scaffold(
       backgroundColor: _bgGrey,
       body: Center(child: CircularProgressIndicator(color: _purple)),
     );
@@ -787,9 +1125,10 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
               Expanded(child: _buildTeamPanel(
                 teamName: homeName,
                 score: teamAScore,
-                color: _teamAColor,
-                onInc: () => setState(() => teamAScore++),
-                onDec: () => setState(() { if (teamAScore > 0) { teamAScore--; } }),
+                color: _colors!.homeColor,
+                colorLabel: _colors!.homeLabel,
+                onInc: _hasStarted && _timerRunning ? () { setState(() => teamAScore++); _saveMatchState(); } : null,
+                onDec: _hasStarted && _timerRunning ? () { setState(() { if (teamAScore > 0) teamAScore--; }); _saveMatchState(); } : null,
               )),
 
               // vertical divider
@@ -799,9 +1138,10 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
               Expanded(child: _buildTeamPanel(
                 teamName: awayName,
                 score: teamBScore,
-                color: _teamBColor,
-                onInc: () => setState(() => teamBScore++),
-                onDec: () => setState(() { if (teamBScore > 0) { teamBScore--; } }),
+                color: _colors!.awayColor,
+                colorLabel: _colors!.awayLabel,
+                onInc: _hasStarted && _timerRunning ? () { setState(() => teamBScore++); _saveMatchState(); } : null,
+                onDec: _hasStarted && _timerRunning ? () { setState(() { if (teamBScore > 0) teamBScore--; }); _saveMatchState(); } : null,
               )),
             ]),
           ),
@@ -814,10 +1154,13 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                 label: _timerRunning ? 'PAUSE' : 'START',
                 color: _timerRunning ? _pauseRed : _startGreen,
                 icon: _timerRunning ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                onTap: () => setState(() {
-                  _timerRunning = !_timerRunning;
-                  if (_timerRunning) { _startTimer(); } else { _timer?.cancel(); }
-                }),
+                onTap: () {
+                  setState(() {
+                    _timerRunning = !_timerRunning;
+                    if (_timerRunning) { _hasStarted = true; _startTimer(); } else { _timer?.cancel(); }
+                  });
+                  _saveMatchState();
+                },
               ),
               _bottomBtn(
                 label: 'SET',
@@ -829,11 +1172,152 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                 label: 'RESET',
                 color: _resetPurple,
                 icon: Icons.refresh_rounded,
-                onTap: () => setState(() {
-                  _timer?.cancel(); _timerRunning = false;
-                  _remainingSeconds = _totalSeconds;
-                  teamAScore = 0; teamBScore = 0;
-                }),
+                onTap: () {
+                  setState(() {
+                    _timer?.cancel(); _timerRunning = false; _hasStarted = false;
+                    _remainingSeconds = _totalSeconds;
+                    teamAScore = 0; teamBScore = 0;
+                  });
+                  _MatchStatePersistence.clear(widget.matchId); // wipe saved state
+                },
+              ),
+              _bottomBtn(
+                label: 'SWAP',
+                color: _swapGold,
+                icon: Icons.swap_horiz_rounded,
+                onTap: () async {
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (ctx) => Dialog(
+                      backgroundColor: Colors.transparent,
+                      child: Container(
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                          color: _purple,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Icon
+                            Container(
+                              width: 56, height: 56,
+                              decoration: BoxDecoration(
+                                color: _swapGold.withOpacity(0.2),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: _swapGold, width: 2),
+                              ),
+                              child: const Icon(Icons.swap_horiz_rounded,
+                                  color: _swapGold, size: 30),
+                            ),
+                            const SizedBox(height: 16),
+                            // Title
+                            const Text('SWAP SIDES?',
+                                style: TextStyle(color: Colors.white,
+                                    fontSize: 16, fontWeight: FontWeight.w900,
+                                    letterSpacing: 1)),
+                            const SizedBox(height: 8),
+                            // Current assignment
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                children: [
+                                  _swapPreviewTeam(
+                                    label: 'HOME',
+                                    colorName: _colors!.homeLabel,
+                                    color: _colors!.homeColor,
+                                    arrowColor: _swapGold,
+                                    newColorName: _colors!.awayLabel,
+                                    newColor: _colors!.awayColor,
+                                  ),
+                                  const Icon(Icons.swap_horiz_rounded,
+                                      color: _swapGold, size: 28),
+                                  _swapPreviewTeam(
+                                    label: 'AWAY',
+                                    colorName: _colors!.awayLabel,
+                                    color: _colors!.awayColor,
+                                    arrowColor: _swapGold,
+                                    newColorName: _colors!.homeLabel,
+                                    newColor: _colors!.homeColor,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text('This will be saved and cannot be\nautomatically undone.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    color: Colors.white.withOpacity(0.55),
+                                    fontSize: 10)),
+                            const SizedBox(height: 20),
+                            // Buttons
+                            Row(children: [
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => Navigator.pop(ctx, false),
+                                  child: Container(
+                                    height: 44,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: Colors.white30),
+                                    ),
+                                    child: const Text('CANCEL',
+                                        style: TextStyle(color: Colors.white,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.bold)),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => Navigator.pop(ctx, true),
+                                  child: Container(
+                                    height: 44,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: _swapGold,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: const Text('SWAP',
+                                        style: TextStyle(color: Colors.white,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.bold)),
+                                  ),
+                                ),
+                              ),
+                            ]),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                  if (confirmed != true || !mounted) return;
+                  final swapped = _colors!.swapped();
+                  await swapped.save(widget.matchId);
+                  if (!mounted) return;
+                  setState(() => _colors = swapped);
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text(
+                      'Sides swapped — Home: ${swapped.homeLabel}  ·  Away: ${swapped.awayLabel}',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    backgroundColor: _swapGold,
+                    duration: const Duration(seconds: 2),
+                    behavior: SnackBarBehavior.floating,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ));
+                },
               ),
               _bottomBtn(
                 label: 'CONFIRM',
@@ -855,8 +1339,9 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
     required String teamName,
     required int score,
     required Color color,
-    required VoidCallback onInc,
-    required VoidCallback onDec,
+    required String colorLabel,
+    required VoidCallback? onInc,
+    required VoidCallback? onDec,
   }) {
     return Container(
       color: _bgGrey,
@@ -864,14 +1349,33 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Team name
-          Text(teamName,
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900,
-                  color: color, letterSpacing: 0.5)),
+          // Team name + color badge
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Flexible(
+                child: Text(teamName,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900,
+                        color: color, letterSpacing: 0.5)),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: color, width: 1.5),
+                ),
+                child: Text(colorLabel,
+                    style: TextStyle(color: color, fontSize: 10,
+                        fontWeight: FontWeight.w900, letterSpacing: 1)),
+              ),
+            ],
+          ),
           const SizedBox(height: 10),
-          // Score box — takes remaining space
+          // Score box
           Expanded(
             child: Container(
               width: double.infinity,
@@ -919,18 +1423,20 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
         ),
       );
 
-  Widget _scoreBtn(IconData icon, Color color, VoidCallback onTap) =>
-      GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 48, height: 48,
-          decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
-              shape: BoxShape.circle,
-              border: Border.all(color: color, width: 2)),
-          child: Icon(icon, color: color, size: 28),
-        ),
-      );
+  Widget _scoreBtn(IconData icon, Color color, VoidCallback? onTap) {
+    final bool enabled = onTap != null;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 48, height: 48,
+        decoration: BoxDecoration(
+            color: enabled ? color.withOpacity(0.12) : Colors.grey.shade300,
+            shape: BoxShape.circle,
+            border: Border.all(color: enabled ? color : Colors.grey.shade400, width: 2)),
+        child: Icon(icon, color: enabled ? color : Colors.grey.shade500, size: 28),
+      ),
+    );
+  }
 
   Widget _bottomBtn({
     required String label, required Color color,
@@ -947,6 +1453,59 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
               color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
         ),
       );
+
+  Widget _swapPreviewTeam({
+    required String label,
+    required String colorName,
+    required Color color,
+    required Color arrowColor,
+    required String newColorName,
+    required Color newColor,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label,
+            style: TextStyle(
+                color: Colors.white.withOpacity(0.6),
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.2)),
+        const SizedBox(height: 6),
+        // Current color pill
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: color, width: 1.5),
+          ),
+          child: Text(colorName,
+              style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900)),
+        ),
+        const SizedBox(height: 4),
+        Icon(Icons.arrow_downward_rounded, color: arrowColor, size: 14),
+        const SizedBox(height: 4),
+        // New color pill
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: newColor.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: newColor, width: 1.5),
+          ),
+          child: Text(newColorName,
+              style: TextStyle(
+                  color: newColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900)),
+        ),
+      ],
+    );
+  }
 
   Widget _popupBtn(String label, Color color, VoidCallback onTap) =>
       GestureDetector(

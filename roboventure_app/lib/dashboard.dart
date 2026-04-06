@@ -79,9 +79,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator(color: Color(0xFF9B84D1)));
                   } else if (snapshot.hasError) {
-                    return _buildErrorState(snapshot.error.toString());
+                    return RefreshIndicator(
+                      onRefresh: _handleRefresh,
+                      color: const Color(0xFF7B56B3),
+                      backgroundColor: Colors.white,
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        child: SizedBox(
+                          height: MediaQuery.of(context).size.height * 0.6,
+                          child: _buildErrorState(snapshot.error.toString()),
+                        ),
+                      ),
+                    );
                   } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                    return const Center(child: Text("No categories found."));
+                    return RefreshIndicator(
+                      onRefresh: _handleRefresh,
+                      color: const Color(0xFF7B56B3),
+                      backgroundColor: Colors.white,
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        child: SizedBox(
+                          height: MediaQuery.of(context).size.height * 0.6,
+                          child: const Center(child: Text("No categories found.")),
+                        ),
+                      ),
+                    );
                   }
 
                   final categories = snapshot.data!;

@@ -5,7 +5,7 @@
 
 class ApiConfig {
   // ── Server ────────────────────────────────────────────────────────────────
-  static const String _host = 'http://175.20.0.43'; // <-- replace with your server IP or hostname
+  static const String _host = 'http://192.168.254.101'; // <-- replace with your server IP or hostname
 
   // ── Base path ─────────────────────────────────────────────────────────────
   static const String _basePath = '/roboventure_api';
@@ -30,4 +30,12 @@ class ApiConfig {
 
   /// championship_sched.dart  →  _ChampApiService.fetchScoredMatchIds()
   static const String getScoredChampionshipMatches = '$baseUrl/get_scored_championship_matches.php';
+
+  /// championship_sched.dart  →  _ChampApiService.fetchGroupCount()
+  /// GET ?category_id=N  →  { "group_count": N }
+  static const String getGroupCount = '$baseUrl/get_group_count.php';
+
+  /// championship_sched.dart / get_score.php
+  /// GET ?category_id=N | ?match_id=N | ?category_id=N&bracket_type=<round>
+  static const String getScore = '$baseUrl/get_score.php';
 }

@@ -263,17 +263,19 @@ class TimerSaveDelegate {
 }
 
 // ─────────────────────────────────────────────
-// COLOR PALETTE
+// COLOR PALETTE  —  Matches mbot1_scoring
 // ─────────────────────────────────────────────
-const Color _primaryPurple = Color(0xFF7D58B3);
-const Color _badgePurple   = Color(0xFFC8BFE1);
-const Color _penaltyRed    = Color(0xFFB35D65);
-const Color _bgGrey        = Color(0xFFF0F0F0);
-const Color _inputGrey     = Color(0xFFE8E8E8);
-const Color _saveGreen     = Color(0xFF5E975E);
-const Color _confirmPurple = Color(0xFF3B1F6E);
-const Color _startGreen    = Color(0xFF5E975E);
-const Color _resetPurple   = Color(0xFF79569A);
+const Color _bgDark        = Color(0xFFF0F0F0); // bgGrey
+const Color _bgCard        = Color(0xFFFFFFFF); // white cards
+const Color _bgCardAlt     = Color(0xFFE8E8E8); // inputGrey
+const Color _accentGreen   = Color(0xFF5E975E); // saveGreen
+const Color _accentAmber   = Color(0xFFF9D949); // accentYellow
+const Color _accentRed     = Color(0xFFB35D65); // penaltyRed / pauseRed
+const Color _accentPurple  = Color(0xFF7D58B3); // primaryPurple
+const Color _textPrimary   = Color(0xFF1A1A2E); // near-black on light bg
+const Color _textMuted     = Color(0xFF9E9E9E); // muted grey
+const Color _divider       = Color(0xFFDDDDDD); // light grey divider
+const Color _timerIdle     = Color(0x557D58B3); // low-opacity purple for disabled state
 
 // ─────────────────────────────────────────────
 // TIMER SCORING PAGE
@@ -294,7 +296,8 @@ class TimerScoringPage extends StatefulWidget {
   State<TimerScoringPage> createState() => _TimerScoringPageState();
 }
 
-class _TimerScoringPageState extends State<TimerScoringPage> {
+class _TimerScoringPageState extends State<TimerScoringPage>
+    with SingleTickerProviderStateMixin {
   // ── Signature delegates ──────────────────────
   final TimerSaveDelegate _captainDelegate = TimerSaveDelegate();
   final TimerSaveDelegate _refereeDelegate = TimerSaveDelegate();
@@ -302,22 +305,30 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
 
   // ── Stopwatch state ──────────────────────────
   bool _timerRunning = false;
-  int _elapsedSeconds = 0;
+  bool _hasStarted   = false;
+  int  _elapsedMs    = 0; // milliseconds for precision
   Timer? _stopwatchTimer;
+
+  // ── Pulse animation for running timer ────────
+  late AnimationController _pulseCtrl;
+  late Animation<double>    _pulseAnim;
 
   void _startTimer() {
     _stopwatchTimer?.cancel();
-    _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _stopwatchTimer = Timer.periodic(const Duration(milliseconds: 10), (_) {
       if (!_timerRunning) return;
-      setState(() => _elapsedSeconds++);
+      setState(() => _elapsedMs += 10);
     });
   }
 
-  String get _timerDisplay {
-    final m = (_elapsedSeconds ~/ 60).toString().padLeft(2, '0');
-    final s = (_elapsedSeconds % 60).toString().padLeft(2, '0');
-    return '$m:$s';
+  String _formatMs(int ms) {
+    final m  = (ms ~/ 60000).toString().padLeft(2, '0');
+    final s  = ((ms % 60000) ~/ 1000).toString().padLeft(2, '0');
+    final cs = ((ms % 1000) ~/ 10).toString().padLeft(2, '0');
+    return '$m:$s.$cs';
   }
+
+  String get _timerDisplay => _formatMs(_elapsedMs);
 
   // ── Fetched data ─────────────────────────────
   bool _loading = true;
@@ -329,19 +340,26 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
 
   List<TimerCategoryInfo> _categories = [];
   TimerCategoryInfo?      _selectedCategory;
-
-  List<TimerRoundInfo> _rounds = [];
-  TimerRoundInfo?      _selectedRound;
+  List<TimerRoundInfo>    _rounds = [];
+  TimerRoundInfo?         _selectedRound;
 
   @override
   void initState() {
     super.initState();
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween<double>(begin: 0.85, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
+    );
     _fetchAllData();
   }
 
   @override
   void dispose() {
     _stopwatchTimer?.cancel();
+    _pulseCtrl.dispose();
     super.dispose();
   }
 
@@ -373,63 +391,71 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
         _loading          = false;
       });
     } catch (e) {
-      debugPrint('[TimerScoringPage] _fetchAllData error: $e');
       setState(() { _errorMsg = e.toString(); _loading = false; });
     }
   }
 
   // ─────────────────────────────────────────────
-  // SAVE SCREENSHOT TO GALLERY
+  // SAVE SCREENSHOT
   // ─────────────────────────────────────────────
   Future<void> _saveToGallery(BuildContext localContext) async {
     try {
-      RenderRepaintBoundary? boundary =
+      final boundary =
           _globalKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) return;
-
-      ui.Image image = await boundary.toImage(pixelRatio: 3.0);
-      ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      Uint8List pngBytes = byteData!.buffer.asUint8List();
-
-      final tempDir = await getTemporaryDirectory();
-      final String filePath =
-          '${tempDir.path}/match_${widget.teamId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final file = await File(filePath).create();
-      await file.writeAsBytes(pngBytes);
-
+      final image    = await boundary.toImage(pixelRatio: 3.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      final bytes    = byteData!.buffer.asUint8List();
+      final dir      = await getTemporaryDirectory();
+      final file     = await File(
+          '${dir.path}/timer_${widget.teamId}_${DateTime.now().millisecondsSinceEpoch}.jpg')
+          .create();
+      await file.writeAsBytes(bytes);
       if (!await Gal.hasAccess()) await Gal.requestAccess();
       await Gal.putImage(file.path);
-
       if (!localContext.mounted) return;
       ScaffoldMessenger.of(localContext).showSnackBar(const SnackBar(
-        content: Text("Match summary saved as JPG!"),
-        backgroundColor: _saveGreen,
+        content: Text('Saved to gallery!'),
+        backgroundColor: _accentGreen,
         duration: Duration(seconds: 2),
       ));
     } catch (e) {
-      debugPrint('Error: $e');
-      if (!localContext.mounted) return;
-      ScaffoldMessenger.of(localContext).showSnackBar(
-          const SnackBar(content: Text("Failed to save image.")));
+      debugPrint('Gallery error: $e');
     }
   }
 
   // ─────────────────────────────────────────────
-  // SUBMIT SCORE TO DB
+  // SUBMIT
   // ─────────────────────────────────────────────
   Future<void> _submitScore(BuildContext localContext) async {
+    // Validate signatures
+    final captainSigned = _captainDelegate.points.any((p) => p != null);
+    final refereeSigned = _refereeDelegate.points.any((p) => p != null);
+    if (!captainSigned || !refereeSigned) {
+      _showValidationDialog(
+        icon: Icons.draw_outlined,
+        iconColor: _accentRed,
+        title: 'SIGNATURES REQUIRED',
+        message: !captainSigned && !refereeSigned
+            ? 'Both captain and referee signatures are required.'
+            : !captainSigned
+                ? 'Captain signature is missing.'
+                : 'Referee signature is missing.',
+      );
+      return;
+    }
+
     if (_selectedRound == null) {
       ScaffoldMessenger.of(localContext).showSnackBar(
-          const SnackBar(content: Text('Please select a Competition Info (round).')));
+          const SnackBar(content: Text('Please select a round.')));
       return;
     }
 
     final rootNav = Navigator.of(context, rootNavigator: true);
-
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
+      builder: (_) => const Center(child: CircularProgressIndicator(color: _accentGreen)),
     );
 
     final success = await TimerScoringApiService.submitScore(
@@ -445,23 +471,99 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
 
     if (success) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Score submitted successfully!'),
-        backgroundColor: _saveGreen,
+        content: Text('Score submitted!'),
+        backgroundColor: _accentGreen,
       ));
       rootNav.pop();
       rootNav.pop();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Submission failed. Please try again.'),
-        backgroundColor: _penaltyRed,
+        backgroundColor: _accentRed,
       ));
     }
   }
 
   // ─────────────────────────────────────────────
+  // VALIDATION DIALOG
+  // ─────────────────────────────────────────────
+  void _showValidationDialog({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String message,
+  }) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+              color: _bgCard, borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _divider)),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                color: iconColor.withOpacity(0.12),
+                shape: BoxShape.circle,
+                border: Border.all(color: iconColor, width: 1.5),
+              ),
+              child: Icon(icon, color: iconColor, size: 26),
+            ),
+            const SizedBox(height: 14),
+            Text(title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: _textPrimary, fontSize: 14,
+                    fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+            const SizedBox(height: 8),
+            Text(message,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: _textMuted, fontSize: 12, height: 1.5)),
+            const SizedBox(height: 20),
+            GestureDetector(
+              onTap: () => Navigator.pop(ctx),
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                    color: iconColor, borderRadius: BorderRadius.circular(12)),
+                child: const Text('OK',
+                    style: TextStyle(color: Colors.white,
+                        fontSize: 14, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────
   // SIGNATURE + SUBMIT POPUP
   // ─────────────────────────────────────────────
+  // Remove this because the confirm button is disabled if it hasnt start yet
   void _showSignaturePopup() {
+    if (!_hasStarted || _elapsedMs == 0) {
+      _showValidationDialog(
+        icon: Icons.timer_off_outlined,
+        iconColor: _accentAmber,
+        title: 'NO TIME RECORDED',
+        message: 'Start and run the timer before confirming results.',
+      );
+      return;
+    }
+    if (_timerRunning) {
+      _showValidationDialog(
+        icon: Icons.pause_circle_outline,
+        iconColor: _accentAmber,
+        title: 'TIMER STILL RUNNING',
+        message: 'Pause the timer before confirming the result.',
+      );
+      return;
+    }
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -475,9 +577,10 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
                 decoration: const BoxDecoration(
-                  color: _primaryPurple,
+                  color: _accentPurple,
                   borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(25), topRight: Radius.circular(25)),
+                      topLeft: Radius.circular(25),
+                      topRight: Radius.circular(25)),
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -487,7 +590,7 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
                       children: [
                         const SizedBox(width: 48),
                         const Text(
-                          "SINGLE MATCH SUMMARY",
+                          'RUN SUMMARY',
                           style: TextStyle(
                               color: Colors.white,
                               fontSize: 18,
@@ -506,18 +609,21 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
                       key: _globalKey,
                       child: Container(
                         padding: const EdgeInsets.all(10),
-                        color: _primaryPurple,
+                        color: _accentPurple,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
                               _team?.teamName ?? '—',
                               style: const TextStyle(
-                                  color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold),
                             ),
                             Text(
                               'ID: ${widget.teamId}',
-                              style: const TextStyle(color: Colors.white70, fontSize: 14),
+                              style: const TextStyle(
+                                  color: Colors.white70, fontSize: 14),
                             ),
                             const SizedBox(height: 15),
                             Row(
@@ -525,18 +631,26 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
                               children: [
                                 _buildSummaryLabel('${_match?.matchId ?? '—'}', 'MATCH'),
                                 _buildSummaryLabel(_timerDisplay, 'TIME'),
+                                _buildSummaryLabel(
+                                    _selectedRound?.roundType ?? '—', 'ROUND'),
                               ],
                             ),
                             const SizedBox(height: 15),
-                            TimerSignaturePad(delegate: _captainDelegate, label: "CAPTAIN SIGNATURE"),
+                            TimerSignaturePad(
+                                delegate: _captainDelegate,
+                                label: 'CAPTAIN SIGNATURE'),
                             const SizedBox(height: 10),
-                            TimerSignaturePad(delegate: _refereeDelegate, label: "REFEREE SIGNATURE"),
+                            TimerSignaturePad(
+                                delegate: _refereeDelegate,
+                                label: 'REFEREE SIGNATURE'),
                             const SizedBox(height: 15),
                             const Text(
-                              "I confirm that I have examined the scores and am willing to submit them without any alterations.",
+                              'I confirm that I have examined the scores and am willing to submit them without any alterations.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                  color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold),
                             ),
                           ],
                         ),
@@ -546,15 +660,11 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
                     Builder(
                       builder: (localCtx) => Row(
                         children: [
-                          Expanded(
-                            child: _buildActionBtn("SAVE", _saveGreen,
-                                fontSize: 18, onTap: () => _saveToGallery(localCtx)),
-                          ),
+                          Expanded(child: _actionBtn('SAVE', const Color(0xFF5E975E),
+                              () => _saveToGallery(localCtx))),
                           const SizedBox(width: 10),
-                          Expanded(
-                            child: _buildActionBtn("SUBMIT", _confirmPurple,
-                                fontSize: 18, onTap: () => _submitScore(localCtx)),
-                          ),
+                          Expanded(child: _actionBtn('SUBMIT', const Color(0xFF3B1F6E),
+                              () => _submitScore(localCtx))),
                         ],
                       ),
                     ),
@@ -568,362 +678,335 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // BUILD
-  // ─────────────────────────────────────────────
-  @override
-  Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(
-        backgroundColor: _bgGrey,
-        body: Center(child: CircularProgressIndicator(color: _primaryPurple)),
-      );
-    }
-
-    if (_errorMsg != null) {
-      return Scaffold(
-        backgroundColor: _bgGrey,
-        appBar: AppBar(
-          backgroundColor: _primaryPurple,
-          automaticallyImplyLeading: false,
-          title: GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 14),
-                SizedBox(width: 6),
-                Text('BACK', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
-              ],
-            ),
-          ),
-        ),
-        body: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error_outline, color: _penaltyRed, size: 48),
-              const SizedBox(height: 16),
-              const Text('Failed to Load Data',
-                  style: TextStyle(color: _penaltyRed, fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: _penaltyRed.withOpacity(0.4)),
-                ),
-                constraints: const BoxConstraints(maxHeight: 200),
-                child: SingleChildScrollView(
-                  child: Text(_errorMsg!,
-                      style: const TextStyle(
-                          color: Colors.black87, fontSize: 12, fontFamily: 'monospace')),
-                ),
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(backgroundColor: _primaryPurple),
-                onPressed: _fetchAllData,
-                icon: const Icon(Icons.refresh, color: Colors.white),
-                label: const Text('Retry', style: TextStyle(color: Colors.white)),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Scaffold(
-      backgroundColor: _bgGrey,
-      body: CustomScrollView(
-        slivers: [
-          // ── APP BAR ───────────────────────────
-          SliverAppBar(
-            pinned: true,
-            elevation: 0,
-            backgroundColor: _primaryPurple,
-            automaticallyImplyLeading: false,
-            toolbarHeight: 70,
-            title: GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 28, height: 28,
-                    decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                    child: const Center(
-                      child: Icon(Icons.arrow_back_ios_new_rounded, color: _primaryPurple, size: 12),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Text("BACK",
-                      style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
-                ],
-              ),
-            ),
-            actions: [
-              // Stopwatch display in app bar
-              Container(
-                margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                    border: Border.all(color: Colors.white, width: 1.5),
-                    borderRadius: BorderRadius.circular(10)),
-                child: Row(
-                  children: [
-                    const Icon(Icons.timer_outlined, color: Colors.white, size: 20),
-                    const SizedBox(width: 5),
-                    Text(_timerDisplay,
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-
-          SliverToBoxAdapter(
-            child: CustomPaint(
-              painter: TimerGeometricBackgroundPainter(),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  children: [
-                    // ── HEADER ROW ─────────────────
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Column(
-                          children: [
-                            const Text("MATCH",
-                                style: TextStyle(
-                                    color: Colors.black54, fontSize: 10, fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 2),
-                            Container(
-                              width: 50, height: 40,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                  color: _badgePurple,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: Colors.black, width: 1.5)),
-                              child: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                child: Text(
-                                  '${_match?.matchId ?? '—'}',
-                                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(width: 15),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: Text(
-                              '${_selectedCategory?.categoryType.toUpperCase() ?? 'ROBOVENTURE'} FORM',
-                              style: const TextStyle(
-                                  fontSize: 18, fontWeight: FontWeight.bold, color: _primaryPurple),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 15),
-                    const Divider(color: Colors.black26, thickness: 1, height: 1),
-                    const SizedBox(height: 10),
-
-                    // ── MATCH INFO CARD ────────────
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(25),
-                        boxShadow: [
-                          BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 10,
-                              offset: const Offset(0, 5))
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text("MATCH INFORMATION",
-                              style: TextStyle(
-                                  color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 11)),
-                          const SizedBox(height: 20),
-
-                          _buildScoringField("COMPETITION TIME",
-                              _match != null
-                                  ? '${_match!.scheduleStart} – ${_match!.scheduleEnd}'
-                                  : '—'),
-                          _buildScoringField("REFEREE NAME", _referee?.refereeName ?? '—'),
-                          _buildScoringField("TEAM NAME", _team?.teamName ?? '—'),
-
-                          Row(
-                            children: [
-                              Expanded(child: _buildScoringField("TEAM ID", '${widget.teamId}')),
-                              const SizedBox(width: 15),
-                              Expanded(child: _buildCategoryDropdown()),
-                            ],
-                          ),
-
-                          _buildRoundDropdown(),
-
-                          const SizedBox(height: 10),
-                          _buildActionBtn("Confirm", _primaryPurple,
-                              fontSize: 18, onTap: _showSignaturePopup),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-
-      // ── BOTTOM BUTTONS ───────────────────────
-      bottomNavigationBar: Container(
-        color: _bgGrey,
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-        child: Row(
-          children: [
-            Expanded(
-              child: _buildActionBtn(
-                _timerRunning ? "Pause" : "Start",
-                _timerRunning ? _penaltyRed : _startGreen,
-                fontSize: 24,
-                onTap: () {
-                  setState(() {
-                    _timerRunning = !_timerRunning;
-                    if (_timerRunning) {
-                      _startTimer();
-                    } else {
-                      _stopwatchTimer?.cancel();
-                    }
-                  });
-                },
-              ),
-            ),
-            const SizedBox(width: 15),
-            Expanded(
-              child: _buildActionBtn(
-                "Reset",
-                _resetPurple,
-                fontSize: 24,
-                onTap: () {
-                  setState(() {
-                    _stopwatchTimer?.cancel();
-                    _timerRunning = false;
-                    _elapsedSeconds = 0;
-                  });
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────
-  // DROPDOWNS
-  // ─────────────────────────────────────────────
-  Widget _buildCategoryDropdown() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 25),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            height: 45,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: BoxDecoration(color: _inputGrey, borderRadius: BorderRadius.circular(5)),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<TimerCategoryInfo>(
-                isExpanded: true,
-                value: _selectedCategory,
-                hint: const Text('Select Category', style: TextStyle(fontSize: 12)),
-                icon: const Icon(Icons.arrow_drop_down, color: Colors.black54),
-                style: const TextStyle(fontSize: 12, color: Colors.black87),
-                onChanged: (val) => setState(() => _selectedCategory = val),
-                items: _categories
-                    .map((c) => DropdownMenuItem(
-                          value: c,
-                          child: Text(c.categoryType, overflow: TextOverflow.ellipsis),
-                        ))
-                    .toList(),
-              ),
-            ),
-          ),
-          const Positioned(
-            top: -12, left: 5,
-            child: Text("CATEGORY",
-                style: TextStyle(color: _primaryPurple, fontWeight: FontWeight.bold, fontSize: 10)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRoundDropdown() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 25),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            height: 45,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: BoxDecoration(color: _inputGrey, borderRadius: BorderRadius.circular(5)),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<TimerRoundInfo>(
-                isExpanded: true,
-                value: _selectedRound,
-                hint: const Text('Select Competition Info', style: TextStyle(fontSize: 12)),
-                icon: const Icon(Icons.arrow_drop_down, color: Colors.black54),
-                style: const TextStyle(fontSize: 12, color: Colors.black87),
-                onChanged: (val) => setState(() => _selectedRound = val),
-                items: _rounds
-                    .map((r) => DropdownMenuItem(
-                          value: r,
-                          child: Text(r.roundType, overflow: TextOverflow.ellipsis),
-                        ))
-                    .toList(),
-              ),
-            ),
-          ),
-          const Positioned(
-            top: -12, left: 5,
-            child: Text("COMPETITION INFO",
-                style: TextStyle(color: _primaryPurple, fontWeight: FontWeight.bold, fontSize: 10)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────
-  // HELPER WIDGETS
-  // ─────────────────────────────────────────────
   Widget _buildSummaryLabel(String value, String label) {
     return Column(
       children: [
         Text(value,
             style: const TextStyle(
-                color: Colors.white, fontWeight: FontWeight.w900,
-                fontSize: 24, fontStyle: FontStyle.italic)),
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 24,
+                fontStyle: FontStyle.italic)),
         Text(label,
             style: const TextStyle(
-                color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
+                color: Colors.white70,
+                fontSize: 10,
+                fontWeight: FontWeight.bold)),
       ],
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // BUILD
+  // ─────────────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Scaffold(
+      backgroundColor: _bgDark,
+      body: Center(child: CircularProgressIndicator(color: _accentGreen)),
+    );
+
+    if (_errorMsg != null) return Scaffold(
+      backgroundColor: _bgDark,
+      appBar: AppBar(
+        backgroundColor: _accentPurple,
+        automaticallyImplyLeading: false,
+        title: GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 14),
+              SizedBox(width: 6),
+              Text('BACK', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(Icons.error_outline, color: _accentRed, size: 48),
+          const SizedBox(height: 16),
+          const Text('Failed to load data',
+              style: TextStyle(color: _accentRed, fontSize: 16,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
+          Text(_errorMsg!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: _textMuted, fontSize: 12)),
+          const SizedBox(height: 20),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: _accentPurple),
+            onPressed: _fetchAllData,
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            label: const Text('Retry', style: TextStyle(color: Colors.white)),
+          ),
+        ]),
+      ),
+    );
+
+    return Scaffold(
+      backgroundColor: _bgDark,
+      body: CustomScrollView(
+        slivers: [
+          // ── APP BAR ─────────────────────────────
+          SliverAppBar(
+            pinned: true,
+            elevation: 0,
+            backgroundColor: _accentPurple,
+            automaticallyImplyLeading: false,
+            toolbarHeight: 70,
+            leading: GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(width: 12),
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: const BoxDecoration(
+                          color: Colors.white, shape: BoxShape.circle),
+                      child: const Center(
+                          child: Icon(Icons.arrow_back_ios_new_rounded,
+                              color: _accentPurple, size: 12)),
+                    ),
+                    const SizedBox(width: 6),
+                    const Text('BACK',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+            ),
+            leadingWidth: 100,
+            actions: [
+              Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      _selectedCategory?.categoryType.toUpperCase() ?? 'TIMER SCORING',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      'MATCH ${_match?.matchId ?? "—"}',
+                      style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          // ── BODY ────────────────────────────────
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+              child: Column(children: [
+
+                // ── HERO TIMER ─────────────────────
+                _buildHeroTimer(),
+                const SizedBox(height: 16),
+
+                // ── TEAM INFO STRIP ─────────────────
+                _buildTeamStrip(),
+                const SizedBox(height: 16),
+
+                // ── MATCH INFO CARD ─────────────────
+                _buildLapPanel(),
+                const SizedBox(height: 16),
+
+                // ── CONFIRM BUTTON ──────────────────
+                _actionBtn(
+                  'CONFIRM RESULT',
+                  _hasStarted && !_timerRunning && _elapsedMs > 0
+                      ? _accentPurple
+                      : _timerIdle,
+                  _hasStarted && !_timerRunning && _elapsedMs > 0
+                      ? _showSignaturePopup
+                      : () {},
+                ),
+                const SizedBox(height: 16),
+              ]),
+            ),
+          ),
+        ],
+      ),
+
+      // ── BOTTOM CONTROLS ─────────────────────────
+      bottomNavigationBar: _buildBottomControls(),
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // HERO TIMER
+  // ─────────────────────────────────────────────
+  Widget _buildHeroTimer() {
+    final Color timerColor = _timerRunning
+        ? _accentGreen
+        : _hasStarted
+            ? _accentAmber
+            : _accentPurple.withOpacity(0.4);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+      decoration: BoxDecoration(
+        color: _bgCard,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: _timerRunning
+              ? _accentGreen.withOpacity(0.4)
+              : _divider,
+          width: _timerRunning ? 1.5 : 1,
+        ),
+        boxShadow: _timerRunning
+            ? [BoxShadow(
+                color: _accentGreen.withOpacity(0.08),
+                blurRadius: 24, spreadRadius: 4)]
+            : [],
+      ),
+      child: Column(children: [
+        // Status chip
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: timerColor.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: timerColor.withOpacity(0.4)),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            // Pulsing dot
+            AnimatedBuilder(
+              animation: _pulseAnim,
+              builder: (_, __) => Container(
+                width: 7, height: 7,
+                decoration: BoxDecoration(
+                  color: _timerRunning
+                      ? _accentGreen.withOpacity(_pulseAnim.value)
+                      : timerColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              _timerRunning ? 'RUNNING' : _hasStarted ? 'PAUSED' : 'READY',
+              style: TextStyle(color: timerColor, fontSize: 10,
+                  fontWeight: FontWeight.w800, letterSpacing: 1.5),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 16),
+
+        // Main time display
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            _timerDisplay,
+            style: TextStyle(
+              color: timerColor,
+              fontSize: 72,
+              fontWeight: FontWeight.w900,
+              fontFamily: 'monospace',
+              letterSpacing: 2,
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // TEAM INFO STRIP
+  // ─────────────────────────────────────────────
+  Widget _buildTeamStrip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: _bgCard,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _divider),
+      ),
+      child: Row(children: [
+        // Team avatar
+        Container(
+          width: 42, height: 42,
+          decoration: BoxDecoration(
+            color: _accentPurple.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _accentPurple.withOpacity(0.4)),
+          ),
+          child: const Icon(Icons.precision_manufacturing_outlined,
+              color: _accentPurple, size: 22),
+        ),
+        const SizedBox(width: 12),
+        Expanded(child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('TEAM',
+                style: TextStyle(color: _textMuted, fontSize: 10,
+                    fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+            const SizedBox(height: 2),
+            Text(_team?.teamName ?? '—',
+                style: const TextStyle(color: _textPrimary, fontSize: 25,
+                    fontWeight: FontWeight.w800)),
+          ],
+        )),
+      ]),
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // MATCH INFORMATION CARD
+  // ─────────────────────────────────────────────
+  Widget _buildLapPanel() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(25),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 5))
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('MATCH INFORMATION',
+              style: TextStyle(
+                  color: Colors.grey,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 11)),
+          const SizedBox(height: 20),
+          _buildScoringField('COMPETITION TIME',
+              _match != null
+                  ? '${_match!.scheduleStart} – ${_match!.scheduleEnd}'
+                  : '—'),
+          _buildScoringField('REFEREE NAME', _referee?.refereeName ?? '—'),
+          Row(children: [
+            Expanded(child: _buildScoringField('TEAM ID', '${widget.teamId}')),
+            const SizedBox(width: 15),
+            Expanded(child: _buildScoringField('ROUND',
+                _selectedRound?.roundType ?? '—')),
+          ]),
+        ],
+      ),
     );
   }
 
@@ -935,62 +1018,119 @@ class _TimerScoringPageState extends State<TimerScoringPage> {
         children: [
           Container(
             height: 45,
-            decoration: BoxDecoration(color: _inputGrey, borderRadius: BorderRadius.circular(5)),
+            decoration: BoxDecoration(
+                color: _bgCardAlt,
+                borderRadius: BorderRadius.circular(5)),
             padding: const EdgeInsets.symmetric(horizontal: 10),
             alignment: Alignment.centerLeft,
             child: Text(value, style: const TextStyle(fontSize: 14)),
           ),
           Positioned(
-            top: -12, left: 5,
+            top: -12,
+            left: 5,
             child: Text(label,
                 style: const TextStyle(
-                    color: _primaryPurple, fontWeight: FontWeight.bold, fontSize: 10)),
+                    color: _accentPurple,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 10)),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildActionBtn(String label, Color color,
-      {double fontSize = 24, required VoidCallback onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: double.infinity,
-        height: 55,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
-        child: Text(label,
-            style: TextStyle(color: Colors.white, fontSize: fontSize, fontWeight: FontWeight.bold)),
-      ),
+  // ─────────────────────────────────────────────
+  // BOTTOM CONTROLS
+  // ─────────────────────────────────────────────
+  Widget _buildBottomControls() {
+    return Container(
+      color: _bgDark,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+      child: Row(children: [
+        // START / PAUSE
+        Expanded(
+          flex: 3,
+          child: GestureDetector(
+            onTap: () => setState(() {
+              _timerRunning = !_timerRunning;
+              if (_timerRunning) { _hasStarted = true; _startTimer(); }
+              else { _stopwatchTimer?.cancel(); }
+            }),
+            child: Container(
+              height: 56,
+              decoration: BoxDecoration(
+                color: _timerRunning
+                    ? _accentRed.withOpacity(0.15)
+                    : _accentGreen.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: _timerRunning ? _accentRed : _accentGreen,
+                  width: 1.5,
+                ),
+              ),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(
+                  _timerRunning
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                  color: _timerRunning ? _accentRed : _accentGreen,
+                  size: 26,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _timerRunning ? 'PAUSE' : 'START',
+                  style: TextStyle(
+                    color: _timerRunning ? _accentRed : _accentGreen,
+                    fontSize: 16, fontWeight: FontWeight.w900,
+                    letterSpacing: 1,
+                  ),
+                ),
+              ]),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        // RESET
+        Expanded(
+          flex: 2,
+          child: GestureDetector(
+            onTap: () => setState(() {
+              _stopwatchTimer?.cancel();
+              _timerRunning = false;
+              _hasStarted   = false;
+              _elapsedMs    = 0;
+            }),
+            child: Container(
+              height: 56,
+              decoration: BoxDecoration(
+                color: const Color(0xFF79569A),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(Icons.refresh_rounded, color: Colors.white, size: 22),
+                SizedBox(width: 6),
+                Text('RESET', style: TextStyle(
+                    color: Colors.white, fontSize: 16,
+                    fontWeight: FontWeight.w900, letterSpacing: 1)),
+              ]),
+            ),
+          ),
+        ),
+      ]),
     );
   }
-}
 
-// ─────────────────────────────────────────────
-// GEOMETRIC BACKGROUND PAINTER
-// ─────────────────────────────────────────────
-class TimerGeometricBackgroundPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..style = PaintingStyle.fill;
-    final List<List<Offset>> polygons = [
-      [const Offset(0, 0), Offset(size.width * 0.45, 0), Offset(size.width * 0.25, size.height * 0.15), Offset(0, size.height * 0.1)],
-      [Offset(0, size.height * 0.1), Offset(size.width * 0.25, size.height * 0.15), Offset(0, size.height * 0.35)],
-      [Offset(size.width * 0.45, 0), Offset(size.width, 0), Offset(size.width * 0.75, size.height * 0.18)],
-      [Offset(size.width * 0.45, 0), Offset(size.width * 0.75, size.height * 0.18), Offset(size.width * 0.25, size.height * 0.15)],
-      [Offset(0, size.height * 0.35), Offset(size.width * 0.25, size.height * 0.15), Offset(size.width * 0.6, size.height * 0.4), Offset(size.width * 0.1, size.height * 0.55)],
-      [Offset(size.width * 0.75, size.height * 0.18), Offset(size.width, size.height * 0.4), Offset(size.width * 0.6, size.height * 0.4)],
-      [Offset(size.width, size.height * 0.4), Offset(size.width, size.height * 0.8), Offset(size.width * 0.65, size.height * 0.6)],
-      [Offset(0, size.height * 0.55), Offset(size.width * 0.35, size.height * 0.75), Offset(0, size.height * 0.9)],
-    ];
-    for (int i = 0; i < polygons.length; i++) {
-      paint.color = const Color(0xFFD6D6E5).withOpacity(0.12 + (i % 3 * 0.08));
-      final path = Path()..addPolygon(polygons[i], true);
-      canvas.drawPath(path, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  Widget _actionBtn(String label, Color color, VoidCallback onTap) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: double.infinity, height: 50,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+              color: color, borderRadius: BorderRadius.circular(14)),
+          child: Text(label,
+              style: const TextStyle(color: Colors.white,
+                  fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 1)),
+        ),
+      );
 }

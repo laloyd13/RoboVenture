@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'api_config.dart';
 
 // ─────────────────────────────────────────────
@@ -292,6 +293,59 @@ class SaveDelegate {
 }
 
 // ─────────────────────────────────────────────
+// MATCH STATE PERSISTENCE
+// Saves mission counters + timer to SharedPreferences on every change.
+// Key prefix: "mbot2_state_<matchId>_<field>"
+// ─────────────────────────────────────────────
+class _Mbot2StatePersistence {
+  static String _k(int matchId, String field) => 'mbot2_state_${matchId}_$field';
+
+  static Future<void> save({
+    required int matchId,
+    required int m01Qty,
+    required int m02Qty,
+    required int m03Qty,
+    required int m04Qty,
+    required int m05Qty,
+    required int violations,
+    required int remainingSeconds,
+    required bool hasStarted,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_k(matchId, 'm01'),      m01Qty);
+    await prefs.setInt(_k(matchId, 'm02'),      m02Qty);
+    await prefs.setInt(_k(matchId, 'm03'),      m03Qty);
+    await prefs.setInt(_k(matchId, 'm04'),      m04Qty);
+    await prefs.setInt(_k(matchId, 'm05'),      m05Qty);
+    await prefs.setInt(_k(matchId, 'viol'),     violations);
+    await prefs.setInt(_k(matchId, 'timer'),    remainingSeconds);
+    await prefs.setBool(_k(matchId, 'started'), hasStarted);
+  }
+
+  static Future<Map<String, dynamic>?> load(int matchId) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!prefs.containsKey(_k(matchId, 'timer'))) return null;
+    return {
+      'm01':     prefs.getInt(_k(matchId, 'm01'))      ?? 0,
+      'm02':     prefs.getInt(_k(matchId, 'm02'))      ?? 0,
+      'm03':     prefs.getInt(_k(matchId, 'm03'))      ?? 0,
+      'm04':     prefs.getInt(_k(matchId, 'm04'))      ?? 0,
+      'm05':     prefs.getInt(_k(matchId, 'm05'))      ?? 0,
+      'viol':    prefs.getInt(_k(matchId, 'viol'))     ?? 0,
+      'timer':   prefs.getInt(_k(matchId, 'timer'))    ?? 240,
+      'started': prefs.getBool(_k(matchId, 'started')) ?? false,
+    };
+  }
+
+  static Future<void> clear(int matchId) async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final f in ['m01','m02','m03','m04','m05','viol','timer','started']) {
+      await prefs.remove(_k(matchId, f));
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
 // COLOR PALETTE
 // ─────────────────────────────────────────────
 const Color primaryPurple = Color(0xFF7D58B3);
@@ -354,6 +408,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
 
   // ── Timer state ──────────────────────────────
   bool _timerRunning = false;
+  bool _hasStarted = false; // true once Start is pressed for the first time
   int _remainingSeconds = 240; // fixed 4:00 minutes
   final int _totalSeconds = 240;
   Timer? _countdownTimer;
@@ -374,6 +429,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
           _countdownTimer?.cancel();
         }
       });
+      _saveMatchState();
     });
   }
 
@@ -401,13 +457,44 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
   @override
   void initState() {
     super.initState();
-    _fetchAllData();
+    _initStateAndData();
   }
 
   @override
   void dispose() {
     _countdownTimer?.cancel();
     super.dispose();
+  }
+
+  /// Persist current state to disk. Called on every scoring or timer change.
+  Future<void> _saveMatchState() => _Mbot2StatePersistence.save(
+    matchId:          widget.matchId,
+    m01Qty:           m01Qty,
+    m02Qty:           m02Qty,
+    m03Qty:           m03Qty,
+    m04Qty:           m04Qty,
+    m05Qty:           m05Qty,
+    violations:       violations,
+    remainingSeconds: _remainingSeconds,
+    hasStarted:       _hasStarted,
+  );
+
+  /// Restore previously saved state (if any), then fetch match data.
+  Future<void> _initStateAndData() async {
+    final saved = await _Mbot2StatePersistence.load(widget.matchId);
+    if (saved != null && mounted) {
+      setState(() {
+        m01Qty            = saved['m01'] as int;
+        m02Qty            = saved['m02'] as int;
+        m03Qty            = saved['m03'] as int;
+        m04Qty            = saved['m04'] as int;
+        m05Qty            = saved['m05'] as int;
+        violations        = saved['viol'] as int;
+        _remainingSeconds = saved['timer'] as int;
+        _hasStarted       = saved['started'] as bool;
+      });
+    }
+    _fetchAllData();
   }
 
   Future<void> _fetchAllData() async {
@@ -438,7 +525,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
         _selectedRound     = rounds.isNotEmpty ? rounds.first : null;
         _loading           = false;
       });
-      _initTimer();
+      // Do NOT reset the timer here — restored state takes precedence
     } catch (e) {
       debugPrint('[ScoringPage] _fetchAllData error: $e');
       setState(() {
@@ -489,7 +576,86 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
   // ─────────────────────────────────────────────
   // SUBMIT SCORE TO DB
   // ─────────────────────────────────────────────
+
+  void _showValidationDialog({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String message,
+  }) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.black12)),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                color: iconColor.withOpacity(0.12),
+                shape: BoxShape.circle,
+                border: Border.all(color: iconColor, width: 1.5),
+              ),
+              child: Icon(icon, color: iconColor, size: 26),
+            ),
+            const SizedBox(height: 14),
+            Text(title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: Color(0xFF1A1A2E),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5)),
+            const SizedBox(height: 8),
+            Text(message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: Color(0xFF9E9E9E), fontSize: 12, height: 1.5)),
+            const SizedBox(height: 20),
+            GestureDetector(
+              onTap: () => Navigator.pop(ctx),
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                    color: iconColor,
+                    borderRadius: BorderRadius.circular(12)),
+                child: const Text('OK',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
   Future<void> _submitScore(BuildContext localContext) async {
+    // ── Validate signatures ───────────────────────────────────────────
+    final captainSigned = _captainDelegate.points.any((p) => p != null);
+    final refereeSigned = _refereeDelegate.points.any((p) => p != null);
+    if (!captainSigned || !refereeSigned) {
+      _showValidationDialog(
+        icon: Icons.draw_outlined,
+        iconColor: penaltyRed,
+        title: 'SIGNATURES REQUIRED',
+        message: !captainSigned && !refereeSigned
+            ? 'Both the captain and referee signatures are required before submitting.'
+            : !captainSigned
+                ? 'The captain signature is missing. Please have the captain sign before submitting.'
+                : 'The referee signature is missing. Please sign before submitting.',
+      );
+      return;
+    }
+
     if (_selectedRound == null) {
       ScaffoldMessenger.of(localContext).showSnackBar(const SnackBar(
           content: Text('Please select a Competition Info (round).')));
@@ -525,6 +691,9 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
     rootNav.pop();
 
     if (success) {
+      // Clear saved state — match is done, next open should start fresh
+      await _Mbot2StatePersistence.clear(widget.matchId);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Score submitted successfully!'),
         backgroundColor: saveGreen,
@@ -1048,9 +1217,9 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
                           const SizedBox(height: 30),
                           _buildActionBtn(
                             "Confirm",
-                            primaryPurple,
+                            _hasStarted && !_timerRunning ? primaryPurple : Colors.grey.shade400,
                             fontSize: 18,
-                            onTap: _showSignaturePopup,
+                            onTap: _hasStarted && !_timerRunning ? _showSignaturePopup : () {},
                           ),
                         ],
                       ),
@@ -1078,11 +1247,13 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
                   setState(() {
                     _timerRunning = !_timerRunning;
                     if (_timerRunning) {
+                      _hasStarted = true;
                       _startTimer();
                     } else {
                       _countdownTimer?.cancel();
                     }
                   });
+                  _saveMatchState();
                 },
               ),
             ),
@@ -1096,6 +1267,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
                   setState(() {
                     _countdownTimer?.cancel();
                     _timerRunning = false;
+                    _hasStarted = false;
                     _remainingSeconds = _totalSeconds;
                     m01Qty = 0;
                     m02Qty = 0;
@@ -1104,6 +1276,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
                     m05Qty = 0;
                     violations = 0;
                   });
+                  _Mbot2StatePersistence.clear(widget.matchId);
                 },
               ),
             ),
@@ -1236,6 +1409,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
 
   Widget _buildMissionCard(String title, int qty, int points, int maxQty, Color color,
       ValueChanged<int> onChanged) {
+    final bool canScore = _hasStarted && _timerRunning;
     return Container(
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
@@ -1251,9 +1425,9 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _buildCounterBtn(Icons.remove,
-                  onTap: () {
-                    if (qty > 0) onChanged(qty - 1);
-                  }),
+                  onTap: canScore
+                      ? () { if (qty > 0) { onChanged(qty - 1); _saveMatchState(); } }
+                      : null),
               Container(
                 margin:
                     const EdgeInsets.symmetric(horizontal: 15),
@@ -1268,7 +1442,9 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
                         fontWeight: FontWeight.bold)),
               ),
               _buildCounterBtn(Icons.add,
-                  onTap: () { if (qty < maxQty) onChanged(qty + 1); }),
+                  onTap: canScore
+                      ? () { if (qty < maxQty) { onChanged(qty + 1); _saveMatchState(); } }
+                      : null),
             ],
           ),
           const SizedBox(height: 15),
@@ -1349,13 +1525,15 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage> {
   }
 
   Widget _buildCounterBtn(IconData icon, {VoidCallback? onTap}) {
+    final bool enabled = onTap != null;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(4),
-        decoration: const BoxDecoration(
-            color: accentYellow, shape: BoxShape.circle),
-        child: Icon(icon, color: Colors.black, size: 24),
+        decoration: BoxDecoration(
+            color: enabled ? accentYellow : Colors.grey.shade400,
+            shape: BoxShape.circle),
+        child: Icon(icon, color: enabled ? Colors.black : Colors.white54, size: 24),
       ),
     );
   }
