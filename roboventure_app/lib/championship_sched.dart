@@ -14,18 +14,9 @@ const Color _headerMuted = Color(0xFF9E9EAD);
 
 // ─────────────────────────────────────────────
 // BRACKET MODE
-// Determined by group count fetched from get_group_count.php.
-//
-//   2 grp → 4 teams  → SF → 3RD → FINAL
-//   3 grp → 6 teams  → ELIM(3) → QF → SF → FINAL
-//   4 grp → 8 teams  → QF → SF → 3RD → FINAL
-//   5 grp → 10 teams → ELIM(2) → QF → SF → FINAL
-//   6 grp → 12 teams → ELIM(4) → QF → SF → FINAL
-//   7 grp → 14 teams → ELIM(6) → QF → SF → FINAL
-//   8 grp → 16 teams → R16(8)  → QF → SF → FINAL
-//   9 grp → 18 teams → ELIM(2) → R16 → QF → SF → FINAL
 // ─────────────────────────────────────────────
 enum _BracketMode {
+  oneGroup,
   twoGroup,
   threeGroup,
   fourGroup,
@@ -38,6 +29,7 @@ enum _BracketMode {
 
 _BracketMode _modeFromGroupCount(int groups) {
   switch (groups) {
+    case 1:  return _BracketMode.oneGroup;
     case 2:  return _BracketMode.twoGroup;
     case 3:  return _BracketMode.threeGroup;
     case 4:  return _BracketMode.fourGroup;
@@ -47,6 +39,7 @@ _BracketMode _modeFromGroupCount(int groups) {
     case 8:  return _BracketMode.eightGroup;
     case 9:  return _BracketMode.nineGroup;
     default:
+      if (groups <= 1) return _BracketMode.oneGroup;
       if (groups <= 2) return _BracketMode.twoGroup;
       if (groups <= 4) return _BracketMode.fourGroup;
       return _BracketMode.eightGroup;
@@ -55,11 +48,14 @@ _BracketMode _modeFromGroupCount(int groups) {
 
 List<String> _roundsForMode(_BracketMode mode) {
   switch (mode) {
+    case _BracketMode.oneGroup:
+      return ['FINAL'];
     case _BracketMode.twoGroup:
       return ['SEMI-FINAL', '3RD PLACE', 'FINAL'];
     case _BracketMode.fourGroup:
       return ['QUARTER-FINAL', 'SEMI-FINAL', '3RD PLACE', 'FINAL'];
     case _BracketMode.threeGroup:
+      return ['ELIM', 'SEMI-FINAL', '3RD PLACE', 'FINAL'];
     case _BracketMode.fiveGroup:
     case _BracketMode.sixGroup:
     case _BracketMode.sevenGroup:
@@ -71,25 +67,20 @@ List<String> _roundsForMode(_BracketMode mode) {
   }
 }
 
-// ─────────────────────────────────────────────
-// bracket_type → UI round label mapping
-// These strings come directly from the API (tbl_match.bracket_type).
-// ─────────────────────────────────────────────
 const Map<String, String> _bracketTypeToRound = {
-  'elimination':   'ELIM',
-  'round-of-32':   'ELIM',
-  'round-of-16':   'ROUND OF 16',
-  'round-of-8':    'QUARTER-FINAL',
-  'quarter-finals':'QUARTER-FINAL',
-  'semi-finals':   'SEMI-FINAL',
-  'third-place':   '3RD PLACE',
-  'final':         'FINAL',
+  'elimination':    'ELIM',
+  'round-of-32':    'ELIM',
+  'round-of-16':    'ROUND OF 16',
+  'round-of-8':     'QUARTER-FINAL',
+  'quarter-finals': 'QUARTER-FINAL',
+  'semi-finals':    'SEMI-FINAL',
+  'third-place':    '3RD PLACE',
+  'final':          'FINAL',
 };
 
 String _uiRoundFromBracketType(String bt) =>
     _bracketTypeToRound[bt.toLowerCase()] ?? bt.toUpperCase();
 
-// round_id stored in tbl_score for each bracket type
 int _roundIdForBracketType(String bt) {
   switch (bt.toLowerCase()) {
     case 'elimination':
@@ -112,8 +103,6 @@ int _roundIdForBracketType(String bt) {
 // ─────────────────────────────────────────────
 // MODELS
 // ─────────────────────────────────────────────
-
-/// A single team-schedule row from get_teamschedule.php.
 class _ScheduleRow {
   final int    matchId;
   final int    teamId;
@@ -144,11 +133,10 @@ class _ScheduleRow {
   );
 }
 
-/// A paired championship match (home + away resolved from schedule rows).
 class _ChampMatch {
   final int    matchId;
-  final String round;       // UI label: 'ELIM', 'QUARTER-FINAL', etc.
-  final String bracketType; // raw DB value: 'elimination', 'quarter-finals', etc.
+  final String round;
+  final String bracketType;
   final String home;
   final String away;
   final int    homeId;
@@ -156,7 +144,7 @@ class _ChampMatch {
   final int    refereeId;
   final int    arenaNumber;
   final String matchTime;
-  final int    roundId;     // round_id for tbl_score
+  final int    roundId;
 
   _ChampMatch({
     required this.matchId,
@@ -174,7 +162,6 @@ class _ChampMatch {
   bool get isTbd => homeId == 0 || awayId == 0;
 }
 
-/// Score for one match (totalscore used as goals for soccer).
 class _MatchScore {
   final int matchId;
   final int homeScore;
@@ -204,6 +191,7 @@ IconData _roundIcon(String round) {
 
 String _modeBadgeLabel(_BracketMode mode) {
   switch (mode) {
+    case _BracketMode.oneGroup:   return '1 GRP / 2T';
     case _BracketMode.twoGroup:   return '2 GRP / 4T';
     case _BracketMode.threeGroup: return '3 GRP / 6T';
     case _BracketMode.fourGroup:  return '4 GRP / 8T';
@@ -219,7 +207,6 @@ String _modeBadgeLabel(_BracketMode mode) {
 // API SERVICE
 // ─────────────────────────────────────────────
 class _ChampApiService {
-  /// Fetch group count from get_group_count.php.
   static Future<int> fetchGroupCount(int categoryId) async {
     try {
       final url = Uri.parse(
@@ -233,8 +220,6 @@ class _ChampApiService {
     return 0;
   }
 
-  /// Fetch all championship schedule rows from get_teamschedule.php.
-  /// Filters to knockout rounds only (excludes 'group').
   static Future<List<_ScheduleRow>> fetchChampionshipSchedule(
       int categoryId) async {
     final url = Uri.parse(
@@ -252,8 +237,6 @@ class _ChampApiService {
         .toList();
   }
 
-  /// Fetch scored championship match IDs + bracket_type from
-  /// get_scored_championship_matches.php.
   static Future<Map<int, String>> fetchScoredMatchInfo(
       int categoryId) async {
     final url = Uri.parse(
@@ -271,9 +254,6 @@ class _ChampApiService {
     return result;
   }
 
-  /// Fetch scored match scores from get_scored_matches.php.
-  /// Returns a map of matchId → _MatchScore using score_independentscore
-  /// as goals (soccer) per team row ordering.
   static Future<Map<int, _MatchScore>> fetchMatchScores(
       int categoryId) async {
     final url = Uri.parse(
@@ -284,7 +264,6 @@ class _ChampApiService {
 
     final List<dynamic> data = json.decode(response.body);
 
-    // Group rows by match_id; keep only championship rounds
     const champBracketTypes = {
       'elimination', 'round-of-32', 'round-of-16', 'round-of-8',
       'quarter-finals', 'semi-finals', 'third-place', 'final',
@@ -302,29 +281,109 @@ class _ChampApiService {
     final Map<int, _MatchScore> result = {};
     byMatch.forEach((mid, rows) {
       if (rows.isEmpty) return;
-      // get_scored_matches returns latest row per (match_id, team_id).
-      // For soccer: score_independentscore = goals scored by that team.
-      // rows are ordered by teamschedule_id ASC, so rows[0] has the lower
-      // teamschedule_id — that team is displayed on the RIGHT (away side)
-      // on screen. Swap indices so the visual home/away sides match.
       final homeScore = rows.length >= 2
-          ? int.tryParse(
-                  rows[1]['score_independentscore'].toString()) ??
-              0
+          ? int.tryParse(rows[1]['score_independentscore'].toString()) ?? 0
           : 0;
-      final awayScore = int.tryParse(
-              rows[0]['score_independentscore'].toString()) ?? 0;
+      final awayScore =
+          int.tryParse(rows[0]['score_independentscore'].toString()) ?? 0;
       result[mid] =
           _MatchScore(matchId: mid, homeScore: homeScore, awayScore: awayScore);
     });
     return result;
   }
+
+  // ── FIX 1: Use get_score.php?match_id= for accurate per-match scores ──
+  // This is more reliable than get_scored_matches which returns all matches
+  // and may have ordering/dedup issues when determining winner/loser.
+  static Future<bool> advanceKnockout({
+    required int matchId,
+    required int homeTeamId,
+    required int awayTeamId,
+    required int categoryId,
+  }) async {
+    try {
+      // 1. Fetch scores specifically for this match using match_id param
+      final scoreUrl = Uri.parse(
+          '${ApiConfig.getScore}?match_id=$matchId');
+      final scoreResp = await http
+          .get(scoreUrl)
+          .timeout(const Duration(seconds: 10));
+
+      if (scoreResp.statusCode != 200) {
+        debugPrint('[advanceKnockout] score fetch failed: ${scoreResp.statusCode}');
+        return false;
+      }
+
+      final List<dynamic> matchRows = json.decode(scoreResp.body);
+      debugPrint('[advanceKnockout] matchId=$matchId rows=${matchRows.length}');
+
+      // FIX 2: Need at least 2 score rows (one per team)
+      if (matchRows.length < 2) {
+        debugPrint('[advanceKnockout] not enough score rows: ${matchRows.length}');
+        return false;
+      }
+
+      // Map teamId → goals (score_independentscore)
+      final Map<int, int> teamScores = {};
+      for (final j in matchRows) {
+        final tid   = int.tryParse(j['team_id'].toString()) ?? 0;
+        final goals = int.tryParse(
+            j['score_independentscore'].toString()) ?? 0;
+        if (tid > 0) teamScores[tid] = goals;
+        debugPrint('[advanceKnockout] team=$tid goals=$goals');
+      }
+
+      final homeGoals = teamScores[homeTeamId] ?? 0;
+      final awayGoals = teamScores[awayTeamId] ?? 0;
+
+      debugPrint('[advanceKnockout] home=$homeTeamId ($homeGoals) vs away=$awayTeamId ($awayGoals)');
+
+      // Tied score — cannot advance
+      if (homeGoals == awayGoals) {
+        debugPrint('[advanceKnockout] TIE — cannot advance');
+        return false;
+      }
+
+      final winnerTeamId = homeGoals > awayGoals ? homeTeamId : awayTeamId;
+      final loserTeamId  = homeGoals > awayGoals ? awayTeamId : homeTeamId;
+
+      // 2. Call advance_knockout.php
+      final advanceUrl = Uri.parse(ApiConfig.advanceKnockout);
+      final body = json.encode({
+        'match_id':       matchId,
+        'winner_team_id': winnerTeamId,
+        'loser_team_id':  loserTeamId,
+        'category_id':    categoryId,
+      });
+
+      debugPrint('[advanceKnockout] POST $advanceUrl body=$body');
+
+      final advanceResp = await http.post(
+        advanceUrl,
+        headers: {'Content-Type': 'application/json'},
+        body: body,
+      ).timeout(const Duration(seconds: 10));
+
+      debugPrint('[advanceKnockout] response [${advanceResp.statusCode}]: ${advanceResp.body}');
+
+      if (advanceResp.statusCode == 200 || advanceResp.statusCode == 201) {
+        final result = json.decode(advanceResp.body) as Map<String, dynamic>;
+        final success = result['success'] == true;
+        if (!success) {
+          debugPrint('[advanceKnockout] PHP returned success=false: ${result['error'] ?? result['message']}');
+        }
+        return success;
+      }
+      return false;
+    } catch (e, stack) {
+      debugPrint('[advanceKnockout] Exception: $e\n$stack');
+      return false;
+    }
+  }
 }
 
 // ─────────────────────────────────────────────
-// MATCH BUILDER — pairs schedule rows into _ChampMatch objects
-// The API returns two rows per match (one per team); we pair them
-// by match_id, respecting the order returned (first row = home).
+// MATCH BUILDER
 // ─────────────────────────────────────────────
 List<_ChampMatch> _pairScheduleRows(List<_ScheduleRow> rows) {
   final Map<int, List<_ScheduleRow>> byMatch = {};
@@ -353,11 +412,9 @@ List<_ChampMatch> _pairScheduleRows(List<_ScheduleRow> rows) {
     ));
   });
 
-  // Sort by match_id so display order is stable
   matches.sort((a, b) => a.matchId.compareTo(b.matchId));
   return matches;
 }
-
 
 // ─────────────────────────────────────────────
 // SCREEN
@@ -390,15 +447,11 @@ class _ChampionshipScheduleScreenState
   bool    _loading = true;
   String? _error;
 
-  // All championship matches loaded from the API, keyed by UI round label
   Map<String, List<_ChampMatch>> _matchesByRound = {};
-
-  // Scored match info: matchId → bracket_type (from get_scored_championship_matches)
-  Map<int, String>     _scoredMatchInfo = {};
-  Map<int, _MatchScore> _matchScores    = {};
+  Map<int, String>      _scoredMatchInfo = {};
+  Map<int, _MatchScore> _matchScores     = {};
 
   List<String> get _rounds => _roundsForMode(_mode);
-
   List<_ChampMatch> get _allMatches =>
       _matchesByRound.values.expand((l) => l).toList();
 
@@ -420,26 +473,20 @@ class _ChampionshipScheduleScreenState
   Future<void> _loadBracket() async {
     setState(() { _loading = true; _error = null; });
     try {
-      // 1. Fetch group count → bracket mode
       final groupCount =
           await _ChampApiService.fetchGroupCount(widget.categoryId);
       final mode = _modeFromGroupCount(groupCount > 0 ? groupCount : 4);
 
-      // 2. Fetch championship schedule rows (all knockout rounds)
       final rows = await _ChampApiService.fetchChampionshipSchedule(
           widget.categoryId);
-
-      // 3. Pair rows into matches
       final allMatches = _pairScheduleRows(rows);
 
-      // 4. Group by UI round label
       final Map<String, List<_ChampMatch>> byRound = {};
       for (final m in allMatches) {
         byRound.putIfAbsent(m.round, () => []).add(m);
       }
 
-      // 5. Fetch scored info + scores
-      Map<int, String>      scoredInfo = {};
+      Map<int, String>      scoredInfo  = {};
       Map<int, _MatchScore> matchScores = {};
       try {
         scoredInfo  = await _ChampApiService.fetchScoredMatchInfo(
@@ -450,20 +497,19 @@ class _ChampionshipScheduleScreenState
 
       if (!mounted) return;
 
-      // 6. Swap TabController
-      final rounds   = _roundsForMode(mode);
-      final oldCtrl  = _tabController;
+      final rounds  = _roundsForMode(mode);
+      final oldCtrl = _tabController;
       _tabController = TabController(length: rounds.length, vsync: this);
       WidgetsBinding.instance
           .addPostFrameCallback((_) => oldCtrl.dispose());
 
       setState(() {
-        _mode           = mode;
-        _matchesByRound = byRound;
+        _mode            = mode;
+        _matchesByRound  = byRound;
         _scoredMatchInfo = scoredInfo;
-        _matchScores    = matchScores;
-        _loading        = false;
-        _bracketKey     = ValueKey('mode_${mode.name}');
+        _matchScores     = matchScores;
+        _loading         = false;
+        _bracketKey      = ValueKey('mode_${mode.name}');
       });
     } catch (e) {
       if (mounted) {
@@ -472,15 +518,24 @@ class _ChampionshipScheduleScreenState
     }
   }
 
-  // ── REFRESH (after scoring) ────────────────────────────────────────
+  // ── REFRESH ────────────────────────────────────────────────────────
   Future<void> _refreshData() async {
     try {
+      final rows = await _ChampApiService.fetchChampionshipSchedule(
+          widget.categoryId);
+      final allMatches = _pairScheduleRows(rows);
+      final Map<String, List<_ChampMatch>> byRound = {};
+      for (final m in allMatches) {
+        byRound.putIfAbsent(m.round, () => []).add(m);
+      }
+
       final scoredInfo  = await _ChampApiService.fetchScoredMatchInfo(
           widget.categoryId);
       final matchScores = await _ChampApiService.fetchMatchScores(
           widget.categoryId);
       if (!mounted) return;
       setState(() {
+        _matchesByRound  = byRound;
         _scoredMatchInfo = scoredInfo;
         _matchScores     = matchScores;
       });
@@ -491,31 +546,157 @@ class _ChampionshipScheduleScreenState
   void _openScoring(_ChampMatch m) async {
     if (m.homeId == 0 || m.awayId == 0) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content:
-            const Text('Teams for this match are not yet determined.'),
+        content: const Text('Teams for this match are not yet determined.'),
         backgroundColor: _accentColor,
         behavior: SnackBarBehavior.floating,
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ));
       return;
     }
+
+    // Re-score guard
+    final isAlreadyScored = _scoredMatchInfo.containsKey(m.matchId);
+    if (isAlreadyScored) {
+      final score = _matchScores[m.matchId];
+      final scoreText = score != null
+          ? '${m.home} ${score.homeScore} – ${score.awayScore} ${m.away}'
+          : '${m.home} vs ${m.away}';
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          backgroundColor: const Color(0xFF1A0A4A),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Color(0xFFFF9F43), width: 1.5),
+          ),
+          title: const Row(children: [
+            Icon(Icons.warning_amber_rounded,
+                color: Color(0xFFFF9F43), size: 22),
+            SizedBox(width: 10),
+            Text('Match Already Scored',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16)),
+          ]),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This match has already been scored:',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF9F43).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                      color: const Color(0xFFFF9F43).withOpacity(0.4)),
+                ),
+                child: Text(scoreText,
+                    style: const TextStyle(
+                        color: Color(0xFFFF9F43),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13)),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Do you want to re-score this match? '
+                'The previous score will be overwritten.',
+                style:
+                    TextStyle(color: Colors.white54, fontSize: 12, height: 1.5),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel',
+                  style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.edit_rounded, size: 16),
+              label: const Text('Re-Score'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFF9F43),
+                foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
+    // ── FIX 3: Navigate to scoring page and wait for result ──────────
+    // SoccerScoringPage MUST call Navigator.pop(context, true) on submit.
     final submitted = await Navigator.push<bool>(
         context,
         MaterialPageRoute(
             builder: (_) => SoccerScoringPage(
-                  matchId:              m.matchId,
-                  teamId:               m.homeId,
-                  awayTeamId:           m.awayId,
-                  refereeId:            m.refereeId > 0 ? m.refereeId : 1,
-                  homeTeamName:         m.home,
-                  awayTeamName:         m.away,
-                  isChampionship:       true,
-                  championshipRoundId:  m.roundId,
+                  matchId:             m.matchId,
+                  teamId:              m.homeId,
+                  awayTeamId:          m.awayId,
+                  refereeId:           m.refereeId > 0 ? m.refereeId : 1,
+                  homeTeamName:        m.home,
+                  awayTeamName:        m.away,
+                  isChampionship:      true,
+                  championshipRoundId: m.roundId,
                 )));
-    if (submitted == true && mounted) {
-      await _refreshData();
+
+    debugPrint('[_openScoring] submitted=$submitted matchId=${m.matchId}');
+
+    if (!mounted) return;
+
+    if (submitted == true) {
+      // ── FIX 4: Show loading indicator while advancing ─────────────
+      // Give the DB a brief moment to commit before we read scores
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      final advanced = await _ChampApiService.advanceKnockout(
+        matchId:    m.matchId,
+        homeTeamId: m.homeId,
+        awayTeamId: m.awayId,
+        categoryId: widget.categoryId,
+      );
+
+      debugPrint('[_openScoring] advanced=$advanced');
+
+      if (mounted) {
+        if (advanced) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: const Text('✅ Teams advanced to next round!'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            duration: const Duration(seconds: 3),
+          ));
+        } else {
+          // FIX 5: Show error snackbar so user knows advancement failed
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: const Text(
+                '⚠️ Score saved but auto-advance failed. '
+                'Check that final/3rd-place match slots exist in the DB.'),
+            backgroundColor: Colors.orange.shade800,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            duration: const Duration(seconds: 5),
+          ));
+        }
+      }
     }
+
+    // Always refresh UI regardless of advance result
+    await _refreshData();
   }
 
   // ── BUILD ──────────────────────────────────────────────────────────
@@ -575,8 +756,7 @@ class _ChampionshipScheduleScreenState
   Widget _buildTitleBar() => Column(children: [
     Container(
       width: double.infinity,
-      padding:
-          const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [Color(0xFF5A3A9A), Color(0xFF7D58B3)],
@@ -592,8 +772,7 @@ class _ChampionshipScheduleScreenState
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: const Color(0xFFD4A017).withOpacity(0.2),
-            border:
-                Border.all(color: const Color(0xFFD4A017), width: 1.5),
+            border: Border.all(color: const Color(0xFFD4A017), width: 1.5),
           ),
           child: const Icon(Icons.emoji_events_rounded,
               color: Color(0xFFD4A017), size: 22),
@@ -617,14 +796,12 @@ class _ChampionshipScheduleScreenState
           ]),
         ),
         Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
             color: const Color(0xFFD4A017).withOpacity(0.2),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-                color: const Color(0xFFD4A017).withOpacity(0.6),
-                width: 1),
+                color: const Color(0xFFD4A017).withOpacity(0.6), width: 1),
           ),
           child: Row(children: [
             const Icon(Icons.groups_rounded,
@@ -661,8 +838,7 @@ class _ChampionshipScheduleScreenState
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0.8),
             tabs: _rounds
-                .map((r) => Tab(
-                    icon: Icon(_roundIcon(r), size: 14), text: r))
+                .map((r) => Tab(icon: Icon(_roundIcon(r), size: 14), text: r))
                 .toList(),
           ),
         ),
@@ -687,7 +863,8 @@ class _ChampionshipScheduleScreenState
             child: Center(child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
+                const Icon(Icons.error_outline,
+                    color: Colors.redAccent, size: 48),
                 const SizedBox(height: 12),
                 Text(_error!,
                     textAlign: TextAlign.center,
@@ -697,7 +874,8 @@ class _ChampionshipScheduleScreenState
                   onPressed: _loadBracket,
                   icon: const Icon(Icons.refresh),
                   label: const Text('RETRY'),
-                  style: ElevatedButton.styleFrom(backgroundColor: _accentColor),
+                  style:
+                      ElevatedButton.styleFrom(backgroundColor: _accentColor),
                 ),
               ],
             )),
@@ -769,7 +947,7 @@ class _ChampionshipScheduleScreenState
             padding: const EdgeInsets.all(14),
             itemCount: matches.length,
             itemBuilder: (_, i) {
-              final m = matches[i];
+              final m       = matches[i];
               final isScored = _scoredMatchInfo.containsKey(m.matchId);
               final matchScore = _matchScores[m.matchId];
               return _ChampMatchCard(
@@ -870,8 +1048,7 @@ class _ChampMatchCard extends StatelessWidget {
 
           // ── Header strip ─────────────────────────────────────────
           Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 12, vertical: 7),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
               color: Colors.black.withOpacity(0.20),
               borderRadius: const BorderRadius.vertical(
@@ -929,22 +1106,19 @@ class _ChampMatchCard extends StatelessWidget {
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis),
-                    // W/L/D is shown beside the VS badge, not here
                   ],
                 )),
 
-                // W/L/D | VS/score | W/L/D — all in one row
+                // W/L/D | VS/score | W/L/D
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Home W/L/D badge
                     if (isScored && matchScore != null &&
                         _result(true).isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(right: 6),
                         child: _resultBadge(_result(true)),
                       ),
-                    // VS / Score badge
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 5),
@@ -966,7 +1140,6 @@ class _ChampMatchCard extends StatelessWidget {
                                   fontSize: 11,
                                   fontWeight: FontWeight.w900)),
                     ),
-                    // Away W/L/D badge
                     if (isScored && matchScore != null &&
                         _result(false).isNotEmpty)
                       Padding(
@@ -997,7 +1170,6 @@ class _ChampMatchCard extends StatelessWidget {
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis),
-                    // W/L/D is shown beside the VS badge, not here
                   ],
                 )),
               ],
@@ -1023,8 +1195,7 @@ class _ChampMatchCard extends StatelessWidget {
 
           // ── Footer ───────────────────────────────────────────────
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
               color: Colors.black.withOpacity(0.12),
               borderRadius: const BorderRadius.vertical(
@@ -1033,7 +1204,6 @@ class _ChampMatchCard extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Round badge
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 8, vertical: 3),
@@ -1049,7 +1219,6 @@ class _ChampMatchCard extends StatelessWidget {
                           letterSpacing: 0.5)),
                 ),
 
-                // Status
                 if (_isTbd)
                   Text('WAITING FOR TEAMS',
                       style: TextStyle(

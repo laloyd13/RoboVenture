@@ -11,6 +11,7 @@ import 'package:flutter/rendering.dart';
 import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
 import 'api_config.dart';
+import 'feedback_utils.dart';
 
 // ─────────────────────────────────────────────
 // DATA MODELS
@@ -1051,11 +1052,14 @@ class _TimerScoringPageState extends State<TimerScoringPage>
         Expanded(
           flex: 3,
           child: GestureDetector(
-            onTap: () => setState(() {
-              _timerRunning = !_timerRunning;
-              if (_timerRunning) { _hasStarted = true; _startTimer(); }
-              else { _stopwatchTimer?.cancel(); }
-            }),
+            onTap: () {
+              FeedbackUtils.controlTap();
+              setState(() {
+                _timerRunning = !_timerRunning;
+                if (_timerRunning) { _hasStarted = true; _startTimer(); }
+                else { _stopwatchTimer?.cancel(); }
+              });
+            },
             child: Container(
               height: 56,
               decoration: BoxDecoration(
@@ -1094,12 +1098,15 @@ class _TimerScoringPageState extends State<TimerScoringPage>
         Expanded(
           flex: 2,
           child: GestureDetector(
-            onTap: () => setState(() {
-              _stopwatchTimer?.cancel();
-              _timerRunning = false;
-              _hasStarted   = false;
-              _elapsedMs    = 0;
-            }),
+            onTap: () {
+              FeedbackUtils.controlTap();
+              setState(() {
+                _stopwatchTimer?.cancel();
+                _timerRunning = false;
+                _hasStarted   = false;
+                _elapsedMs    = 0;
+              });
+            },
             child: Container(
               height: 56,
               decoration: BoxDecoration(

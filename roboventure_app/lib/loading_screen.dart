@@ -152,7 +152,7 @@ class _LoadingScreenState extends State<LoadingScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0E0A1A),
+      backgroundColor: const Color(0xFF2A1F4E),
       body: Stack(children: [
 
         // ── Rotating geometric background ──────────────────────────
@@ -169,11 +169,12 @@ class _LoadingScreenState extends State<LoadingScreen>
           animation: _glowPulse,
           builder: (_, __) => Center(
             child: Container(
-              width: 320, height: 320,
+              width: 380, height: 380,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: RadialGradient(colors: [
-                  const Color(0xFF7D58B3).withOpacity(_glowPulse.value * 0.45),
+                  const Color(0xFF7D58B3).withOpacity(_glowPulse.value * 0.65),
+                  const Color(0xFF7D58B3).withOpacity(_glowPulse.value * 0.15),
                   Colors.transparent,
                 ]),
               ),
@@ -246,7 +247,7 @@ class _LoadingScreenState extends State<LoadingScreen>
                     Text(
                       'Powered by CREOTEC',
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.35),
+                        color: Colors.white.withOpacity(0.55),
                         fontSize: 10,
                         fontWeight: FontWeight.w500,
                         letterSpacing: 1.5,
@@ -280,9 +281,9 @@ class _LoadingScreenState extends State<LoadingScreen>
                           value: _barCtrl.value,
                           minHeight: 3,
                           backgroundColor:
-                              Colors.white.withOpacity(0.10),
+                              Colors.white.withOpacity(0.18),
                           valueColor: const AlwaysStoppedAnimation(
-                              Color(0xFF7D58B3)),
+                              Color(0xFFB48EE8)),
                         ),
                       ),
                     ),
@@ -296,7 +297,7 @@ class _LoadingScreenState extends State<LoadingScreen>
                         style: TextStyle(
                           color: _networkError
                               ? const Color(0xFFE57373).withOpacity(0.85)
-                              : Colors.white.withOpacity(0.30),
+                              : Colors.white.withOpacity(0.55),
                           fontSize: 9,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 2,
@@ -316,7 +317,7 @@ class _LoadingScreenState extends State<LoadingScreen>
         if (_networkError)
           Positioned.fill(
             child: Container(
-              color: const Color(0xFF0E0A1A).withOpacity(0.88),
+              color: const Color(0xFF2A1F4E).withOpacity(0.92),
               child: SafeArea(
                 child: Center(
                   child: Padding(
@@ -524,14 +525,27 @@ class _GeoBgPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
 
-    // Concentric rotating hexagons
-    final radii   = [size.width * 0.65, size.width * 0.48, size.width * 0.30];
-    final opacities = [0.06, 0.09, 0.12];
-    final speeds    = [1.0, -0.7, 0.5];
+    // Subtle diagonal grid lines
+    final gridPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.5
+      ..color = const Color(0xFF9B78D4).withOpacity(0.10);
+    const gridSpacing = 48.0;
+    for (double x = -size.height; x < size.width + size.height; x += gridSpacing) {
+      canvas.drawLine(Offset(x, 0), Offset(x + size.height, size.height), gridPaint);
+      canvas.drawLine(Offset(x + size.height, 0), Offset(x, size.height), gridPaint);
+    }
+
+    // Concentric rotating hexagons — much more visible
+    final radii     = [size.width * 0.72, size.width * 0.52, size.width * 0.34, size.width * 0.18];
+    final opacities = [0.28, 0.38, 0.45, 0.30];
+    final widths    = [1.2, 1.5, 1.8, 1.0];
+    final speeds    = [1.0, -0.7, 0.5, -1.2];
 
     for (int r = 0; r < radii.length; r++) {
-      paint.color = const Color(0xFF7D58B3)
-          .withOpacity(opacities[r]);
+      paint
+        ..color = const Color(0xFF9B78D4).withOpacity(opacities[r])
+        ..strokeWidth = widths[r];
       final a = angle * speeds[r];
       final path = Path();
       for (int i = 0; i < 6; i++) {
@@ -541,22 +555,66 @@ class _GeoBgPainter extends CustomPainter {
       }
       path.close();
       canvas.drawPath(path, paint);
+
+      // Spoke lines from center to each vertex on outermost hex
+      if (r == 0) {
+        final spokePaint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.6
+          ..color = const Color(0xFF9B78D4).withOpacity(0.12);
+        for (int i = 0; i < 6; i++) {
+          final x = cx + radii[r] * math.cos(a + i * math.pi / 3);
+          final y = cy + radii[r] * math.sin(a + i * math.pi / 3);
+          canvas.drawLine(Offset(cx, cy), Offset(x, y), spokePaint);
+        }
+      }
     }
 
-    // Scattered small diamond shapes
+    // Corner triangle accents
+    final triPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0
+      ..color = const Color(0xFF7D58B3).withOpacity(0.30);
+    final triSize = size.width * 0.18;
+    final triOffsets = [
+      Offset(size.width * 0.05, size.height * 0.05),
+      Offset(size.width * 0.95, size.height * 0.05),
+      Offset(size.width * 0.05, size.height * 0.92),
+      Offset(size.width * 0.95, size.height * 0.92),
+    ];
+    for (int ti = 0; ti < triOffsets.length; ti++) {
+      final to = triOffsets[ti];
+      final ta = angle * (ti.isEven ? 0.3 : -0.3);
+      final triPath = Path();
+      for (int i = 0; i < 3; i++) {
+        final x = to.dx + triSize * math.cos(ta + i * 2 * math.pi / 3);
+        final y = to.dy + triSize * math.sin(ta + i * 2 * math.pi / 3);
+        if (i == 0) triPath.moveTo(x, y); else triPath.lineTo(x, y);
+      }
+      triPath.close();
+      canvas.drawPath(triPath, triPaint);
+    }
+
+    // Scattered diamond shapes — brighter and larger
     final seed = [
       Offset(size.width * 0.12, size.height * 0.15),
       Offset(size.width * 0.88, size.height * 0.12),
       Offset(size.width * 0.08, size.height * 0.80),
       Offset(size.width * 0.92, size.height * 0.78),
       Offset(size.width * 0.50, size.height * 0.08),
+      Offset(size.width * 0.22, size.height * 0.55),
+      Offset(size.width * 0.78, size.height * 0.50),
     ];
     final dp = Paint()
       ..style = PaintingStyle.fill
-      ..color = const Color(0xFFD4A017).withOpacity(0.12);
+      ..color = const Color(0xFFD4A017).withOpacity(0.45);
+    final dpStroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.8
+      ..color = const Color(0xFFD4A017).withOpacity(0.55);
 
     for (final s in seed) {
-      final size2 = 4.0 + 2 * math.sin(angle + s.dx);
+      final size2 = 6.0 + 3 * math.sin(angle + s.dx * 0.01);
       final path = Path()
         ..moveTo(s.dx, s.dy - size2)
         ..lineTo(s.dx + size2, s.dy)
@@ -564,6 +622,7 @@ class _GeoBgPainter extends CustomPainter {
         ..lineTo(s.dx - size2, s.dy)
         ..close();
       canvas.drawPath(path, dp);
+      canvas.drawPath(path, dpStroke);
     }
   }
 

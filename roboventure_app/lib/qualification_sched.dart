@@ -217,7 +217,7 @@ class _ScheduleApiService {
             .map((j) {
               final matchId = j['match_id']?.toString() ?? '0';
               final teamId  = j['team_id']?.toString()  ?? '0';
-              return '${matchId}_${teamId}';
+              return '${matchId}_$teamId';
             })
             .toSet();
       }
@@ -247,7 +247,7 @@ class _ScheduleApiService {
           final matchId = j['match_id']?.toString() ?? '0';
           final teamId  = j['team_id']?.toString()  ?? '0';
           final score   = int.tryParse(j['score_totalscore']?.toString() ?? '0') ?? 0;
-          map['${matchId}_${teamId}'] = score;
+          map['${matchId}_$teamId'] = score;
         }
         return map;
       }
@@ -686,9 +686,9 @@ class _ArenaScheduleView extends StatelessWidget {
       final team2Scored = row.awayId != 0 && scoredMatchIds.contains(team2Key);
       final bothScored  = team1Scored && team2Scored;
 
-      // Score keyed by each team's own ID — swap corrects the display order
-      final hScore = bothScored ? (scoreMap[team2Key] ?? 0) : 0;
-      final aScore = bothScored ? (scoreMap[team1Key] ?? 0) : 0;
+      // Score keyed by each team's own ID
+      final hScore = bothScored ? (scoreMap[team1Key] ?? 0) : 0;
+      final aScore = bothScored ? (scoreMap[team2Key] ?? 0) : 0;
 
       return _SoccerMatchRow(
         matchId:       row.matchId,

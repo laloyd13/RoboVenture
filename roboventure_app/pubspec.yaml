@@ -17,6 +17,9 @@ dependencies:
   loading_animation_widget:
   gal: 2.3.2  # gallery access
   shared_preferences: ^2.2.0
+  vibration: ^2.0.0          # reliable haptic/vibration on Android & iOS
+  audioplayers: ^6.0.0       # cross-platform audio for "time's up" alert
+  sound_mode: ^3.0.0  # detects silent/vibrate/normal sound mode
 
 dev_dependencies:
   flutter_test:
@@ -41,3 +44,4 @@ flutter:
   assets:
     - assets/RV_logo.png
     - assets/CreoLogo.png
+    - assets/sounds/timesup.mp3

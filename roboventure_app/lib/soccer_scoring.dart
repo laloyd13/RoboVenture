@@ -13,6 +13,7 @@ import 'package:flutter/rendering.dart';
 import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
 import 'api_config.dart';
+import 'feedback_utils.dart';
 
 // ─────────────────────────────────────────────
 // DATA MODELS
@@ -223,8 +224,9 @@ class _SigPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final p = Paint()..color = Colors.black..strokeCap = StrokeCap.round..strokeWidth = 3;
-    for (int i = 0; i < points.length - 1; i++)
+    for (int i = 0; i < points.length - 1; i++) {
       if (points[i] != null && points[i+1] != null) { canvas.drawLine(points[i]!, points[i+1]!, p); }
+    }
   }
   @override
   bool shouldRepaint(_SigPainter old) => old.points != points;
@@ -295,8 +297,11 @@ class _ColorAssignment {
 // MATCH STATE PERSISTENCE
 // Saves scores + timer to SharedPreferences on every change.
 // Key prefix: "soccer_state_<matchId>_<field>"
+// Saved state expires after 5 minutes of inactivity — if the user doesn't
+// return within that window, the stale state is discarded automatically.
 // ─────────────────────────────────────────────
 class _MatchStatePersistence {
+  static const int _maxAgeMinutes = 5;
   static String _k(int matchId, String field) => 'soccer_state_${matchId}_$field';
 
   static Future<void> save({
@@ -311,12 +316,31 @@ class _MatchStatePersistence {
     await prefs.setInt(_k(matchId, 'scoreB'),    teamBScore);
     await prefs.setInt(_k(matchId, 'timer'),     remainingSeconds);
     await prefs.setBool(_k(matchId, 'started'),  hasStarted);
+    // Stamp the wall-clock time so we can expire stale saves on next load.
+    await prefs.setInt(_k(matchId, 'savedAt'),
+        DateTime.now().millisecondsSinceEpoch);
   }
 
   static Future<Map<String, dynamic>?> load(int matchId) async {
     final prefs = await SharedPreferences.getInstance();
     // If no saved state exists yet, return null
     if (!prefs.containsKey(_k(matchId, 'scoreA'))) return null;
+
+    // ── Expiry check ──────────────────────────────────────────────────
+    // Discard the saved state if it is older than _maxAgeMinutes minutes.
+    // This handles the case where the user left the screen for a long time
+    // and the in-memory timer has long since lapsed.
+    final savedAt = prefs.getInt(_k(matchId, 'savedAt'));
+    if (savedAt != null) {
+      final age = DateTime.now()
+          .difference(DateTime.fromMillisecondsSinceEpoch(savedAt));
+      if (age.inMinutes >= _maxAgeMinutes) {
+        debugPrint('[SoccerPersistence] Saved state expired (${age.inMinutes}m old). Discarding.');
+        await clear(matchId);
+        return null;
+      }
+    }
+
     return {
       'scoreA':   prefs.getInt(_k(matchId, 'scoreA'))   ?? 0,
       'scoreB':   prefs.getInt(_k(matchId, 'scoreB'))   ?? 0,
@@ -331,6 +355,7 @@ class _MatchStatePersistence {
     await prefs.remove(_k(matchId, 'scoreB'));
     await prefs.remove(_k(matchId, 'timer'));
     await prefs.remove(_k(matchId, 'started'));
+    await prefs.remove(_k(matchId, 'savedAt'));
   }
 }
 
@@ -363,7 +388,8 @@ class SoccerScoringPage extends StatefulWidget {
   State<SoccerScoringPage> createState() => _SoccerScoringPageState();
 }
 
-class _SoccerScoringPageState extends State<SoccerScoringPage> {
+class _SoccerScoringPageState extends State<SoccerScoringPage>
+    with WidgetsBindingObserver {
   final SoccerSaveDelegate _captainDelegate = SoccerSaveDelegate();
   final SoccerSaveDelegate _refereeDelegate = SoccerSaveDelegate();
   final GlobalKey _globalKey = GlobalKey();
@@ -377,6 +403,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
   int _remainingSeconds = 300;
   final int _totalSeconds = 300;
   Timer? _timer;
+  DateTime? _backgroundedAt; // tracks when the app was backgrounded
 
   bool get _timerEnded => _hasStarted && _remainingSeconds == 0;
 
@@ -399,12 +426,14 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
       setState(() {
         if (_remainingSeconds > 0) {
           _remainingSeconds--;
-        } else {
-          _timerRunning = false;
-          _timer?.cancel();
-          // Check for tie when timer naturally reaches 0
-          if (teamAScore == teamBScore && !_overtimeConfirmed && mounted) {
-            WidgetsBinding.instance.addPostFrameCallback((_) => _showOvertimeDialog());
+          if (_remainingSeconds == 0) {
+            _timerRunning = false;
+            _timer?.cancel();
+            FeedbackUtils.timesUp(); // vibration burst + alert sound
+            // Check for tie when timer naturally reaches 0
+            if (teamAScore == teamBScore && !_overtimeConfirmed && mounted) {
+              WidgetsBinding.instance.addPostFrameCallback((_) => _showOvertimeDialog());
+            }
           }
         }
       });
@@ -418,6 +447,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -426,14 +456,125 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
     _initColorAndData();
   }
 
-  /// Persist current scores + timer to disk. Called on every change.
-  Future<void> _saveMatchState() => _MatchStatePersistence.save(
-    matchId:          widget.matchId,
-    teamAScore:       teamAScore,
-    teamBScore:       teamBScore,
-    remainingSeconds: _remainingSeconds,
-    hasStarted:       _hasStarted,
-  );
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _timer?.cancel();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      if (_timerRunning) {
+        setState(() => _timerRunning = false);
+        _timer?.cancel();
+        _saveMatchState();
+      }
+      _backgroundedAt = DateTime.now();
+    } else if (state == AppLifecycleState.resumed) {
+      final bg = _backgroundedAt;
+      _backgroundedAt = null;
+      if (bg != null) {
+        final away = DateTime.now().difference(bg);
+        if (away.inSeconds >= 60 && _hasStarted && mounted) {
+          _showAwayWarningDialog();
+        }
+      }
+    }
+  }
+
+  void _showAwayWarningDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.black12),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                color: _penaltyRed.withOpacity(0.12),
+                shape: BoxShape.circle,
+                border: Border.all(color: _penaltyRed, width: 1.5),
+              ),
+              child: const Icon(Icons.timer_off, color: _penaltyRed, size: 26),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              "YOU'VE BEEN AWAY FOR A WHILE",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF1A1A2E),
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              "The match timer was paused. What would you like to do with the current scores?",
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFF9E9E9E), fontSize: 12, height: 1.5),
+            ),
+            const SizedBox(height: 20),
+            GestureDetector(
+              onTap: () => Navigator.pop(ctx),
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _startGreen,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text('KEEP CURRENT SCORES',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            GestureDetector(
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() {
+                  teamAScore = 0;
+                  teamBScore = 0;
+                  _remainingSeconds = _totalSeconds;
+                  _hasStarted = false;
+                  _timerRunning = false;
+                  _overtimeConfirmed = false;
+                });
+                _timer?.cancel();
+                _saveMatchState();
+              },
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _penaltyRed,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text('RESET SCORES & TIMER',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
 
   /// Load persisted color assignment (or create+save a new random one),
   /// restore scores/timer if available, then fetch match data.
@@ -458,17 +599,115 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
     _fetchAllData();
   }
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-    ]);
-    // Restore system UI when leaving
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    super.dispose();
+  // ── Back-button interception ──────────────────────────────────────
+  /// Called by both the custom BACK button and PopScope (Android back gesture).
+  /// If the match has never started, just pop immediately.
+  /// Otherwise show a dialog that lets the referee keep scores, reset, or leave.
+  void _handleBackPress() {
+    if (!_hasStarted) {
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+    _showBackWarningDialog();
   }
+
+  void _showBackWarningDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.black12),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                color: _penaltyRed.withOpacity(0.12),
+                shape: BoxShape.circle,
+                border: Border.all(color: _penaltyRed, width: 1.5),
+              ),
+              child: const Icon(Icons.timer_off, color: _penaltyRed, size: 26),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'LEAVE THE MATCH?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF1A1A2E),
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'The match is still in progress. The timer and scores will be reset. What would you like to do?',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFF9E9E9E), fontSize: 12, height: 1.5),
+            ),
+            const SizedBox(height: 20),
+            // Stay and keep scores
+            GestureDetector(
+              onTap: () => Navigator.pop(ctx),
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _startGreen,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text('STAY',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            // Actually leave
+            GestureDetector(
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() {
+                  teamAScore = 0;
+                  teamBScore = 0;
+                  _remainingSeconds = _totalSeconds;
+                  _hasStarted = false;
+                  _timerRunning = false;
+                  _overtimeConfirmed = false;
+                });
+                _timer?.cancel();
+                _saveMatchState();
+                if (mounted) Navigator.pop(context);
+              },
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _penaltyRed,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text('BACK',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  /// Persist current scores + timer to disk. Called on every change.
+  Future<void> _saveMatchState() => _MatchStatePersistence.save(
+    matchId:          widget.matchId,
+    teamAScore:       teamAScore,
+    teamBScore:       teamBScore,
+    remainingSeconds: _remainingSeconds,
+    hasStarted:       _hasStarted,
+  );
 
   Future<void> _fetchAllData() async {
     setState(() { _loading = true; _errorMsg = null; });
@@ -522,12 +761,22 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
       final rounds      = results[ri]   as List<SoccerRoundInfo>;
       final existScores = results[ri+1] as List<Map<String, dynamic>>;
 
+      // DB scores are the source of truth. If the DB has scores, apply them
+      // and sync SharedPreferences. If the DB has NO scores (e.g. deleted),
+      // clear SharedPreferences so stale local state doesn't survive.
       if (existScores.isNotEmpty) {
+        int newA = 0, newB = 0;
         for (final s in existScores) {
           final tid = int.tryParse(s['team_id']?.toString() ?? '0') ?? 0;
           final sc  = int.tryParse(s['score_independentscore']?.toString() ?? '0') ?? 0;
-          if (tid == widget.teamId) { teamAScore = sc; } else { teamBScore = sc; }
+          if (tid == widget.teamId) { newA = sc; } else { newB = sc; }
         }
+        setState(() { teamAScore = newA; teamBScore = newB; });
+        _saveMatchState(); // keep SharedPreferences in sync with DB
+      } else {
+        // No scores in DB (never submitted or deleted) — wipe local cache
+        await _MatchStatePersistence.clear(widget.matchId);
+        setState(() { teamAScore = 0; teamBScore = 0; });
       }
 
       setState(() {
@@ -648,9 +897,10 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Score submitted!'), backgroundColor: _saveGreen));
-      Navigator.pop(ctx);           // close the MATCH SUMMARY dialog
+      if (ctx.mounted) Navigator.pop(ctx); // close the MATCH SUMMARY dialog
       Navigator.pop(context, true); // return true → championship marks as scored
     } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Submission failed.'), backgroundColor: _penaltyRed));
     }
@@ -1026,45 +1276,41 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
   // ─────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    if (_loading || _colors == null) return const Scaffold(
-      backgroundColor: _bgGrey,
-      body: Center(child: CircularProgressIndicator(color: _purple)),
-    );
+    if (_loading || _colors == null) {
+      return const Scaffold(
+        backgroundColor: _bgGrey,
+        body: Center(child: CircularProgressIndicator(color: _purple)),
+      );
+    }
 
-    if (_errorMsg != null) return Scaffold(
-      backgroundColor: _bgGrey,
-      body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        const Icon(Icons.error_outline, color: _penaltyRed, size: 48),
-        const SizedBox(height: 12),
-        const Text('Failed to load data',
-            style: TextStyle(color: _penaltyRed, fontSize: 16, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 16),
-        ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(backgroundColor: _purple),
-          onPressed: _fetchAllData,
-          icon: const Icon(Icons.refresh, color: Colors.white),
-          label: const Text('Retry', style: TextStyle(color: Colors.white)),
-        ),
-      ])),
-    );
+    if (_errorMsg != null) {
+      return Scaffold(
+        backgroundColor: _bgGrey,
+        body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(Icons.error_outline, color: _penaltyRed, size: 48),
+          const SizedBox(height: 12),
+          const Text('Failed to load data',
+              style: TextStyle(color: _penaltyRed, fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: _purple),
+            onPressed: _fetchAllData,
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            label: const Text('Retry', style: TextStyle(color: Colors.white)),
+          ),
+        ])),
+      );
+    }
 
     final homeName = widget.homeTeamName.isNotEmpty ? widget.homeTeamName : (_team?.teamName ?? 'TEAM A');
     final awayName = widget.awayTeamName.isNotEmpty ? widget.awayTeamName : (_awayTeam?.teamName ?? 'TEAM B');
 
-    // ── LANDSCAPE LAYOUT — matches sketch exactly ──────────────────
-    //
-    //  ┌─────────────────────────────────────────────────┐
-    //  │  [← BACK]          [00] [00]  ← TIMER           │  top bar
-    //  ├──────────────────────┬──────────────────────────┤
-    //  │                      │                          │
-    //  │   TEAM A             │           TEAM B         │
-    //  │   [score box]        │           [score box]    │  main
-    //  │   [−]  [+]           │           [−]  [+]       │
-    //  │                      │                          │
-    //  ├──────────────────────┴──────────────────────────┤
-    //  │          [START]   [SET]   [RESET]              │  bottom bar
-    //  └─────────────────────────────────────────────────┘
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _handleBackPress();
+      },
+      child: Scaffold(
       backgroundColor: _bgGrey,
       body: Column(children: [
 
@@ -1076,7 +1322,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
             child: Row(children: [
               // BACK
               GestureDetector(
-                onTap: () => Navigator.pop(context),
+                onTap: _handleBackPress,
                 child: Row(children: [
                   Container(
                     width: 30, height: 30,
@@ -1303,10 +1549,11 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
                   );
                   if (confirmed != true || !mounted) return;
                   final swapped = _colors!.swapped();
+                  final messenger = ScaffoldMessenger.of(context);
                   await swapped.save(widget.matchId);
                   if (!mounted) return;
                   setState(() => _colors = swapped);
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  messenger.showSnackBar(SnackBar(
                     content: Text(
                       'Sides swapped — Home: ${swapped.homeLabel}  ·  Away: ${swapped.awayLabel}',
                       style: const TextStyle(fontWeight: FontWeight.bold),
@@ -1329,7 +1576,8 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
           ),
 
         ]),
-    );
+    ), // Scaffold
+    ); // PopScope
   }
 
   // ─────────────────────────────────────────────
@@ -1426,7 +1674,10 @@ class _SoccerScoringPageState extends State<SoccerScoringPage> {
   Widget _scoreBtn(IconData icon, Color color, VoidCallback? onTap) {
     final bool enabled = onTap != null;
     return GestureDetector(
-      onTap: onTap,
+      onTap: onTap == null ? null : () {
+        FeedbackUtils.counterTap();
+        onTap();
+      },
       child: Container(
         width: 48, height: 48,
         decoration: BoxDecoration(

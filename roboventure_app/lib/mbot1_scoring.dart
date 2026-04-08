@@ -12,6 +12,7 @@ import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_config.dart';
+import 'feedback_utils.dart';
 
 // ─────────────────────────────────────────────
 // DATA MODELS
@@ -296,8 +297,11 @@ class SaveDelegate {
 // MATCH STATE PERSISTENCE
 // Saves mission counters + timer to SharedPreferences on every change.
 // Key prefix: "mbot1_state_<matchId>_<field>"
+// Saved state expires after 5 minutes of inactivity — if the user doesn't
+// return within that window, the stale state is discarded automatically.
 // ─────────────────────────────────────────────
 class _Mbot1StatePersistence {
+  static const int _maxAgeMinutes = 5;
   static String _k(int matchId, String field) => 'mbot1_state_${matchId}_$field';
 
   static Future<void> save({
@@ -312,19 +316,38 @@ class _Mbot1StatePersistence {
     required bool hasStarted,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_k(matchId, 'm01'),      m01Qty);
-    await prefs.setInt(_k(matchId, 'm02'),      m02Qty);
-    await prefs.setInt(_k(matchId, 'm03'),      m03Qty);
-    await prefs.setInt(_k(matchId, 'm04'),      m04Qty);
-    await prefs.setInt(_k(matchId, 'm05'),      m05Qty);
-    await prefs.setInt(_k(matchId, 'viol'),     violations);
-    await prefs.setInt(_k(matchId, 'timer'),    remainingSeconds);
-    await prefs.setBool(_k(matchId, 'started'), hasStarted);
+    await prefs.setInt(_k(matchId, 'm01'),       m01Qty);
+    await prefs.setInt(_k(matchId, 'm02'),       m02Qty);
+    await prefs.setInt(_k(matchId, 'm03'),       m03Qty);
+    await prefs.setInt(_k(matchId, 'm04'),       m04Qty);
+    await prefs.setInt(_k(matchId, 'm05'),       m05Qty);
+    await prefs.setInt(_k(matchId, 'viol'),      violations);
+    await prefs.setInt(_k(matchId, 'timer'),     remainingSeconds);
+    await prefs.setBool(_k(matchId, 'started'),  hasStarted);
+    // Stamp the wall-clock time so we can expire stale saves on next load.
+    await prefs.setInt(_k(matchId, 'savedAt'),
+        DateTime.now().millisecondsSinceEpoch);
   }
 
   static Future<Map<String, dynamic>?> load(int matchId) async {
     final prefs = await SharedPreferences.getInstance();
     if (!prefs.containsKey(_k(matchId, 'timer'))) return null;
+
+    // ── Expiry check ──────────────────────────────────────────────────
+    // Discard the saved state if it is older than _maxAgeMinutes minutes.
+    // This handles the case where the user left the screen for a long time
+    // and the in-memory timer has long since lapsed.
+    final savedAt = prefs.getInt(_k(matchId, 'savedAt'));
+    if (savedAt != null) {
+      final age = DateTime.now()
+          .difference(DateTime.fromMillisecondsSinceEpoch(savedAt));
+      if (age.inMinutes >= _maxAgeMinutes) {
+        debugPrint('[Mbot1Persistence] Saved state expired (${age.inMinutes}m old). Discarding.');
+        await clear(matchId);
+        return null;
+      }
+    }
+
     return {
       'm01':     prefs.getInt(_k(matchId, 'm01'))      ?? 0,
       'm02':     prefs.getInt(_k(matchId, 'm02'))      ?? 0,
@@ -339,7 +362,7 @@ class _Mbot1StatePersistence {
 
   static Future<void> clear(int matchId) async {
     final prefs = await SharedPreferences.getInstance();
-    for (final f in ['m01','m02','m03','m04','m05','viol','timer','started']) {
+    for (final f in ['m01','m02','m03','m04','m05','viol','timer','started','savedAt']) {
       await prefs.remove(_k(matchId, f));
     }
   }
@@ -385,7 +408,8 @@ class Mbot1ScoringPage extends StatefulWidget {
   State<Mbot1ScoringPage> createState() => _Mbot1ScoringPageState();
 }
 
-class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
+class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
+    with WidgetsBindingObserver {
   // ── Signature delegates ──────────────────────
   final SaveDelegate _captainDelegate = SaveDelegate();
   final SaveDelegate _refereeDelegate = SaveDelegate();
@@ -412,10 +436,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
   int _remainingSeconds = 240; // fixed 4:00 minutes
   final int _totalSeconds = 240;
   Timer? _countdownTimer;
-
-  void _initTimer() {
-    setState(() => _remainingSeconds = _totalSeconds);
-  }
+  DateTime? _backgroundedAt; // tracks when the app was backgrounded
 
   void _startTimer() {
     _countdownTimer?.cancel();
@@ -424,9 +445,11 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
       setState(() {
         if (_remainingSeconds > 0) {
           _remainingSeconds--;
-        } else {
-          _timerRunning = false;
-          _countdownTimer?.cancel();
+          if (_remainingSeconds == 0) {
+            _timerRunning = false;
+            _countdownTimer?.cancel();
+            FeedbackUtils.timesUp(); // vibration burst + alert sound
+          }
         }
       });
       _saveMatchState();
@@ -453,17 +476,222 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
   List<RoundInfo> _rounds = [];
   RoundInfo? _selectedRound;
 
-  // ─────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initStateAndData();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _countdownTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      // App going to background — pause timer and record time
+      if (_timerRunning) {
+        setState(() => _timerRunning = false);
+        _countdownTimer?.cancel();
+        _saveMatchState();
+      }
+      _backgroundedAt = DateTime.now();
+    } else if (state == AppLifecycleState.resumed) {
+      // App returned to foreground
+      final bg = _backgroundedAt;
+      _backgroundedAt = null;
+      if (bg != null) {
+        final away = DateTime.now().difference(bg);
+        if (away.inSeconds >= 60 && _hasStarted && mounted) {
+          _showAwayWarningDialog();
+        }
+      }
+    }
+  }
+
+  void _showAwayWarningDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.black12),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                color: penaltyRed.withOpacity(0.12),
+                shape: BoxShape.circle,
+                border: Border.all(color: penaltyRed, width: 1.5),
+              ),
+              child: const Icon(Icons.timer_off, color: penaltyRed, size: 26),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              "YOU'VE BEEN AWAY FOR A WHILE",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF1A1A2E),
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              "The match timer was paused. What would you like to do with the current scores?",
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFF9E9E9E), fontSize: 12, height: 1.5),
+            ),
+            const SizedBox(height: 20),
+            GestureDetector(
+              onTap: () => Navigator.pop(ctx),
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: startGreen,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text('KEEP CURRENT SCORES',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            GestureDetector(
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() {
+                  m01Qty = 0; m02Qty = 0; m03Qty = 0;
+                  m04Qty = 0; m05Qty = 0; violations = 0;
+                  _remainingSeconds = _totalSeconds;
+                  _hasStarted = false;
+                  _timerRunning = false;
+                });
+                _countdownTimer?.cancel();
+                _saveMatchState();
+              },
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: penaltyRed,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text('RESET SCORES & TIMER',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  // ── Back-button interception ──────────────────────────────────────
+  void _handleBackPress() {
+    if (!_hasStarted) {
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+    _showBackWarningDialog();
+  }
+
+  void _showBackWarningDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.black12),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                color: penaltyRed.withOpacity(0.12),
+                shape: BoxShape.circle,
+                border: Border.all(color: penaltyRed, width: 1.5),
+              ),
+              child: const Icon(Icons.timer_off, color: penaltyRed, size: 26),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'LEAVE THE MATCH?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF1A1A2E),
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'The match is still in progress. The timer and scores will be reset. What would you like to do?',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFF9E9E9E), fontSize: 12, height: 1.5),
+            ),
+            const SizedBox(height: 20),
+            GestureDetector(
+              onTap: () => Navigator.pop(ctx),
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: startGreen,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text('STAY',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            GestureDetector(
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() {
+                  m01Qty = 0; m02Qty = 0; m03Qty = 0;
+                  m04Qty = 0; m05Qty = 0; violations = 0;
+                  _remainingSeconds = _totalSeconds;
+                  _hasStarted = false;
+                  _timerRunning = false;
+                });
+                _countdownTimer?.cancel();
+                _saveMatchState();
+                if (mounted) Navigator.pop(context);
+              },
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: penaltyRed,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text('BACK',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   /// Persist current state to disk. Called on every scoring or timer change.
@@ -864,7 +1092,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
           backgroundColor: primaryPurple,
           automaticallyImplyLeading: false,
           title: GestureDetector(
-            onTap: () => Navigator.pop(context),
+            onTap: _handleBackPress,
             child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -928,7 +1156,12 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
       );
     }
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _handleBackPress();
+      },
+      child: Scaffold(
       backgroundColor: bgGrey,
       body: CustomScrollView(
         slivers: [
@@ -940,7 +1173,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
             automaticallyImplyLeading: false,
             toolbarHeight: 70,
             title: GestureDetector(
-              onTap: () => Navigator.pop(context),
+              onTap: _handleBackPress,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1241,20 +1474,24 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
             Expanded(
               child: _buildActionBtn(
                 _timerRunning ? "Pause" : "Start",
-                _timerRunning ? penaltyRed : startGreen,
+                _timerRunning
+                    ? penaltyRed
+                    : (_remainingSeconds == 0 ? Colors.grey.shade400 : startGreen),
                 fontSize: 24,
-                onTap: () {
-                  setState(() {
-                    _timerRunning = !_timerRunning;
-                    if (_timerRunning) {
-                      _hasStarted = true;
-                      _startTimer();
-                    } else {
-                      _countdownTimer?.cancel();
-                    }
-                  });
-                  _saveMatchState();
-                },
+                onTap: _remainingSeconds == 0 && !_timerRunning
+                    ? () {}
+                    : () {
+                        setState(() {
+                          _timerRunning = !_timerRunning;
+                          if (_timerRunning) {
+                            _hasStarted = true;
+                            _startTimer();
+                          } else {
+                            _countdownTimer?.cancel();
+                          }
+                        });
+                        _saveMatchState();
+                      },
               ),
             ),
             const SizedBox(width: 15),
@@ -1283,7 +1520,8 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
           ],
         ),
       ),
-    );
+    ), // Scaffold
+    ); // PopScope
   }
 
   // ─────────────────────────────────────────────
@@ -1527,7 +1765,10 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage> {
   Widget _buildCounterBtn(IconData icon, {VoidCallback? onTap}) {
     final bool enabled = onTap != null;
     return GestureDetector(
-      onTap: onTap,
+      onTap: onTap == null ? null : () {
+        FeedbackUtils.counterTap();
+        onTap();
+      },
       child: Container(
         padding: const EdgeInsets.all(4),
         decoration: BoxDecoration(
