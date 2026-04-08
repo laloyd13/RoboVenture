@@ -174,8 +174,9 @@ class TimerScoringApiService {
 class TimerSignaturePad extends StatefulWidget {
   final TimerSaveDelegate delegate;
   final String label;
+  final bool isSmall;
 
-  const TimerSignaturePad({super.key, required this.delegate, required this.label});
+  const TimerSignaturePad({super.key, required this.delegate, required this.label, this.isSmall = false});
 
   @override
   TimerSignaturePadState createState() => TimerSignaturePadState();
@@ -219,7 +220,7 @@ class TimerSignaturePadState extends State<TimerSignaturePad> {
             onPanEnd: (details) => widget.delegate.addPoint(null),
             child: Container(
               key: _paintKey,
-              height: 120,
+              height: widget.isSmall ? 80 : 120,
               width: double.infinity,
               decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
               child: ClipRRect(
@@ -298,16 +299,19 @@ class TimerScoringPage extends StatefulWidget {
 }
 
 class _TimerScoringPageState extends State<TimerScoringPage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   // ── Signature delegates ──────────────────────
   final TimerSaveDelegate _captainDelegate = TimerSaveDelegate();
   final TimerSaveDelegate _refereeDelegate = TimerSaveDelegate();
   final GlobalKey _globalKey = GlobalKey();
 
   // ── Stopwatch state ──────────────────────────
-  bool _timerRunning = false;
-  bool _hasStarted   = false;
-  int  _elapsedMs    = 0; // milliseconds for precision
+  bool _timerRunning    = false;
+  bool _hasStarted      = false;
+  bool _wasBackgrounded = false; // true only when paused via AppLifecycle.paused
+  int  _elapsedMs       = 0; // total elapsed ms (updated each tick)
+  int  _baseElapsedMs   = 0; // accumulated ms before current run segment
+  DateTime? _startTime;        // wall-clock time when current run segment started
   Timer? _stopwatchTimer;
 
   // ── Pulse animation for running timer ────────
@@ -316,9 +320,13 @@ class _TimerScoringPageState extends State<TimerScoringPage>
 
   void _startTimer() {
     _stopwatchTimer?.cancel();
-    _stopwatchTimer = Timer.periodic(const Duration(milliseconds: 10), (_) {
-      if (!_timerRunning) return;
-      setState(() => _elapsedMs += 10);
+    _startTime = DateTime.now(); // record wall-clock start of this segment
+    _stopwatchTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (!_timerRunning || _startTime == null) return;
+      setState(() {
+        _elapsedMs = _baseElapsedMs +
+            DateTime.now().difference(_startTime!).inMilliseconds;
+      });
     });
   }
 
@@ -347,6 +355,7 @@ class _TimerScoringPageState extends State<TimerScoringPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pulseCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
@@ -359,9 +368,38 @@ class _TimerScoringPageState extends State<TimerScoringPage>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _stopwatchTimer?.cancel();
     _pulseCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // `inactive` fires when the notification panel is pulled down OR the
+    // recent-apps overlay appears. The ticker is still running — do nothing.
+    //
+    // `paused` fires only when the app is truly backgrounded (home button,
+    // user switched to another app). Stop the ticker here and record elapsed.
+    //
+    // `resumed` fires when returning from EITHER inactive OR paused. We must
+    // only restart the ticker when we actually stopped it (i.e. _wasBackgrounded).
+    if (state == AppLifecycleState.paused) {
+      if (_timerRunning) {
+        _baseElapsedMs   = _elapsedMs; // freeze current time
+        _startTime       = null;
+        _wasBackgrounded = true;
+        _stopwatchTimer?.cancel();
+        // _timerRunning stays true so it auto-resumes on foreground
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      if (_timerRunning && _wasBackgrounded) {
+        _wasBackgrounded = false;
+        _startTimer(); // picks up from _baseElapsedMs
+      }
+      // If _wasBackgrounded is false we came back from `inactive` (notification
+      // panel / recent-apps peek) — the ticker was never stopped, nothing to do.
+    }
   }
 
   Future<void> _fetchAllData() async {
@@ -501,27 +539,26 @@ class _TimerScoringPageState extends State<TimerScoringPage>
         child: Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-              color: _bgCard, borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: _divider)),
+              color: _accentPurple, borderRadius: BorderRadius.circular(20)),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Container(
               width: 52, height: 52,
               decoration: BoxDecoration(
-                color: iconColor.withOpacity(0.12),
+                color: Colors.orangeAccent.withOpacity(0.2),
                 shape: BoxShape.circle,
-                border: Border.all(color: iconColor, width: 1.5),
+                border: Border.all(color: Colors.orangeAccent, width: 1.5),
               ),
-              child: Icon(icon, color: iconColor, size: 26),
+              child: Icon(icon, color: Colors.orangeAccent, size: 26),
             ),
             const SizedBox(height: 14),
             Text(title,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: _textPrimary, fontSize: 14,
+                style: const TextStyle(color: Colors.white, fontSize: 14,
                     fontWeight: FontWeight.w900, letterSpacing: 0.5)),
             const SizedBox(height: 8),
             Text(message,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: _textMuted, fontSize: 12, height: 1.5)),
+                style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12, height: 1.5)),
             const SizedBox(height: 20),
             GestureDetector(
               onTap: () => Navigator.pop(ctx),
@@ -529,7 +566,7 @@ class _TimerScoringPageState extends State<TimerScoringPage>
                 width: double.infinity, height: 44,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                    color: iconColor, borderRadius: BorderRadius.circular(12)),
+                    color: Colors.orangeAccent, borderRadius: BorderRadius.circular(12)),
                 child: const Text('OK',
                     style: TextStyle(color: Colors.white,
                         fontSize: 14, fontWeight: FontWeight.bold)),
@@ -570,13 +607,18 @@ class _TimerScoringPageState extends State<TimerScoringPage>
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (BuildContext ctx) {
+        final mq = MediaQuery.of(ctx);
+        final isSmall = mq.size.height < 650;
         return Scaffold(
           backgroundColor: Colors.transparent,
           body: Align(
             alignment: Alignment.bottomCenter,
             child: IntrinsicHeight(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                padding: EdgeInsets.symmetric(
+                  horizontal: isSmall ? 16 : 24,
+                  vertical: isSmall ? 14 : 20,
+                ),
                 decoration: const BoxDecoration(
                   color: _accentPurple,
                   borderRadius: BorderRadius.only(
@@ -590,11 +632,11 @@ class _TimerScoringPageState extends State<TimerScoringPage>
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const SizedBox(width: 48),
-                        const Text(
+                        Text(
                           'RUN SUMMARY',
                           style: TextStyle(
                               color: Colors.white,
-                              fontSize: 18,
+                              fontSize: isSmall ? 15 : 18,
                               fontWeight: FontWeight.w900,
                               fontStyle: FontStyle.italic),
                         ),
@@ -605,59 +647,64 @@ class _TimerScoringPageState extends State<TimerScoringPage>
                       ],
                     ),
                     const Divider(color: Colors.white24, thickness: 1, height: 1),
-                    const SizedBox(height: 12),
+                    SizedBox(height: isSmall ? 8 : 12),
                     RepaintBoundary(
                       key: _globalKey,
                       child: Container(
-                        padding: const EdgeInsets.all(10),
+                        padding: EdgeInsets.all(isSmall ? 6 : 10),
                         color: _accentPurple,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(
-                              _team?.teamName ?? '—',
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold),
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                _team?.teamName ?? '—',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: isSmall ? 15 : 18,
+                                    fontWeight: FontWeight.bold),
+                              ),
                             ),
                             Text(
                               'ID: ${widget.teamId}',
-                              style: const TextStyle(
-                                  color: Colors.white70, fontSize: 14),
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: isSmall ? 12 : 14),
                             ),
-                            const SizedBox(height: 15),
+                            SizedBox(height: isSmall ? 10 : 15),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                               children: [
-                                _buildSummaryLabel('${_match?.matchId ?? '—'}', 'MATCH'),
-                                _buildSummaryLabel(_timerDisplay, 'TIME'),
+                                _buildSummaryLabel('${_match?.matchId ?? '—'}', 'MATCH', isSmall: isSmall),
+                                _buildSummaryLabel(_timerDisplay, 'TIME', isSmall: isSmall),
                                 _buildSummaryLabel(
-                                    _selectedRound?.roundType ?? '—', 'ROUND'),
+                                    _selectedRound?.roundType ?? '—', 'ROUND', isSmall: isSmall),
                               ],
                             ),
-                            const SizedBox(height: 15),
+                            SizedBox(height: isSmall ? 10 : 15),
                             TimerSignaturePad(
                                 delegate: _captainDelegate,
-                                label: 'CAPTAIN SIGNATURE'),
-                            const SizedBox(height: 10),
+                                label: 'CAPTAIN SIGNATURE',
+                                isSmall: isSmall),
+                            SizedBox(height: isSmall ? 6 : 10),
                             TimerSignaturePad(
                                 delegate: _refereeDelegate,
-                                label: 'REFEREE SIGNATURE'),
-                            const SizedBox(height: 15),
-                            const Text(
+                                label: 'REFEREE SIGNATURE',
+                                isSmall: isSmall),
+                            SizedBox(height: isSmall ? 10 : 15),
+                            Text(
                               'I confirm that I have examined the scores and am willing to submit them without any alterations.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                   color: Colors.white70,
-                                  fontSize: 12,
+                                  fontSize: isSmall ? 10 : 12,
                                   fontWeight: FontWeight.bold),
                             ),
                           ],
                         ),
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    SizedBox(height: isSmall ? 12 : 20),
                     Builder(
                       builder: (localCtx) => Row(
                         children: [
@@ -679,21 +726,118 @@ class _TimerScoringPageState extends State<TimerScoringPage>
     );
   }
 
-  Widget _buildSummaryLabel(String value, String label) {
+  Widget _buildSummaryLabel(String value, String label, {bool isSmall = false}) {
     return Column(
       children: [
-        Text(value,
-            style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-                fontSize: 24,
-                fontStyle: FontStyle.italic)),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(value,
+              style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                  fontSize: isSmall ? 18 : 24,
+                  fontStyle: FontStyle.italic)),
+        ),
         Text(label,
             style: const TextStyle(
                 color: Colors.white70,
                 fontSize: 10,
                 fontWeight: FontWeight.bold)),
       ],
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // BACK BUTTON INTERCEPTION
+  // ─────────────────────────────────────────────
+  void _handleBackPress() {
+    if (!_hasStarted) {
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+    _showBackWarningDialog();
+  }
+
+  void _showBackWarningDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: _accentPurple,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                color: Colors.orangeAccent.withOpacity(0.2),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.orangeAccent, width: 1.5),
+              ),
+              child: const Icon(Icons.timer_off, color: Colors.orangeAccent, size: 26),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'LEAVE THE RUN?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'The timer is still running. The recorded time will be lost. What would you like to do?',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12, height: 1.5),
+            ),
+            const SizedBox(height: 20),
+            GestureDetector(
+              onTap: () => Navigator.pop(ctx),
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.orangeAccent,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text('STAY',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            GestureDetector(
+              onTap: () {
+                Navigator.pop(ctx);
+                _stopwatchTimer?.cancel();
+                setState(() {
+                  _timerRunning = false;
+                  _hasStarted   = false;
+                  _elapsedMs    = 0;
+                });
+                if (mounted) Navigator.pop(context);
+              },
+              child: Container(
+                width: double.infinity, height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white30),
+                ),
+                child: const Text('BACK',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]),
+        ),
+      ),
     );
   }
 
@@ -713,7 +857,7 @@ class _TimerScoringPageState extends State<TimerScoringPage>
         backgroundColor: _accentPurple,
         automaticallyImplyLeading: false,
         title: GestureDetector(
-          onTap: () => Navigator.pop(context),
+          onTap: _handleBackPress,
           child: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -747,7 +891,10 @@ class _TimerScoringPageState extends State<TimerScoringPage>
       ),
     );
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) { if (!didPop) _handleBackPress(); },
+      child: Scaffold(
       backgroundColor: _bgDark,
       body: CustomScrollView(
         slivers: [
@@ -759,7 +906,7 @@ class _TimerScoringPageState extends State<TimerScoringPage>
             automaticallyImplyLeading: false,
             toolbarHeight: 70,
             leading: GestureDetector(
-              onTap: () => Navigator.pop(context),
+              onTap: _handleBackPress,
               child: Center(
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -848,7 +995,8 @@ class _TimerScoringPageState extends State<TimerScoringPage>
 
       // ── BOTTOM CONTROLS ─────────────────────────
       bottomNavigationBar: _buildBottomControls(),
-    );
+    ), // Scaffold
+    ); // PopScope
   }
 
   // ─────────────────────────────────────────────
@@ -961,9 +1109,15 @@ class _TimerScoringPageState extends State<TimerScoringPage>
                 style: TextStyle(color: _textMuted, fontSize: 10,
                     fontWeight: FontWeight.w700, letterSpacing: 1.2)),
             const SizedBox(height: 2),
-            Text(_team?.teamName ?? '—',
-                style: const TextStyle(color: _textPrimary, fontSize: 25,
-                    fontWeight: FontWeight.w800)),
+            // FittedBox keeps the name on one line regardless of length
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(_team?.teamName ?? '—',
+                  maxLines: 1,
+                  style: const TextStyle(color: _textPrimary, fontSize: 25,
+                      fontWeight: FontWeight.w800)),
+            ),
           ],
         )),
       ]),
@@ -1057,7 +1211,11 @@ class _TimerScoringPageState extends State<TimerScoringPage>
               setState(() {
                 _timerRunning = !_timerRunning;
                 if (_timerRunning) { _hasStarted = true; _startTimer(); }
-                else { _stopwatchTimer?.cancel(); }
+                else {
+                  _stopwatchTimer?.cancel();
+                  _baseElapsedMs = _elapsedMs; // save progress on pause
+                  _startTime = null;
+                }
               });
             },
             child: Container(
@@ -1102,9 +1260,11 @@ class _TimerScoringPageState extends State<TimerScoringPage>
               FeedbackUtils.controlTap();
               setState(() {
                 _stopwatchTimer?.cancel();
-                _timerRunning = false;
-                _hasStarted   = false;
-                _elapsedMs    = 0;
+                _timerRunning   = false;
+                _hasStarted     = false;
+                _elapsedMs      = 0;
+                _baseElapsedMs  = 0;
+                _startTime      = null;
               });
             },
             child: Container(

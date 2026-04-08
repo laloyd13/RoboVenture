@@ -131,6 +131,21 @@ class SoccerScoringApiService {
     return [];
   }
 
+  // GET check whether a score already exists for this match + team
+  static Future<bool> scoreExists(int matchId, int teamId) async {
+    try {
+      final r = await _get('check_score', {
+        'match_id': '$matchId',
+        'team_id':  '$teamId',
+      });
+      if (r.statusCode == 200) {
+        final body = json.decode(r.body);
+        return (body['exists'] == true || body['exists'] == 1);
+      }
+    } catch (_) {}
+    return false; // on error, allow submission to proceed
+  }
+
   static Future<bool> submitScore({
     required int matchId, required int roundId, required int teamId,
     required int refereeId, required int teamAScore, required int teamBScore,
@@ -400,9 +415,11 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
   bool _timerRunning = false;
   bool _hasStarted = false; // true once Start is pressed for the first time
   bool _overtimeConfirmed = false; // true if referee chose to extend after tie
+  bool _isSubmitting = false; // guard against duplicate submissions
   int _remainingSeconds = 300;
   final int _totalSeconds = 300;
   Timer? _timer;
+  bool _wasBackgrounded = false; // true only when timer was stopped due to AppLifecycle.paused
   DateTime? _backgroundedAt; // tracks when the app was backgrounded
 
   bool get _timerEnded => _hasStarted && _remainingSeconds == 0;
@@ -469,82 +486,104 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
+    void didChangeAppLifecycleState(AppLifecycleState state) {
+    // `inactive` fires for notification panel, recent-apps switcher, and
+    // incoming calls — the user hasn't left the app, so the timer must keep
+    // running through those transient states. Do NOT stop the timer here.
+    //
+    // `paused` fires only when the app is truly backgrounded (home button,
+    // switched to another app). Stop the ticker and record time here.
+    //
+    // `resumed` fires when returning from EITHER inactive OR paused.
+    // Only show the away-warning if we actually went to background (_wasBackgrounded).
+    if (state == AppLifecycleState.paused) {
       if (_timerRunning) {
         setState(() => _timerRunning = false);
         _timer?.cancel();
         _saveMatchState();
+        _wasBackgrounded = true;
       }
       _backgroundedAt = DateTime.now();
     } else if (state == AppLifecycleState.resumed) {
-      final bg = _backgroundedAt;
-      _backgroundedAt = null;
-      if (bg != null) {
-        final away = DateTime.now().difference(bg);
-        if (away.inSeconds >= 60 && _hasStarted && mounted) {
-          _showAwayWarningDialog();
+      if (_wasBackgrounded) {
+        _wasBackgrounded = false;
+        final bg = _backgroundedAt;
+        _backgroundedAt = null;
+        if (bg != null) {
+          final away = DateTime.now().difference(bg);
+          if (away.inSeconds >= 60 && _hasStarted && mounted) {
+            _showAwayWarningDialog();
+          }
         }
       }
+      // If _wasBackgrounded is false we came back from `inactive`
+      // (notification panel / recent-apps peek) — nothing to do.
     }
   }
 
   void _showAwayWarningDialog() {
+    final safeAreaPad = MediaQuery.of(context).padding;
+    final dialogDx = -(safeAreaPad.left - safeAreaPad.right) / 2;
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => Dialog(
+      builder: (ctx) {
+        final sw = MediaQuery.of(ctx).size.shortestSide;
+        final isSmall = sw < 500;
+        return Dialog(
         backgroundColor: Colors.transparent,
-        child: Container(
-          padding: const EdgeInsets.all(24),
+        insetPadding: EdgeInsets.zero,
+        child: Transform.translate(
+          offset: Offset(dialogDx, 0),
+          child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 340),
+          child: Container(
+          padding: EdgeInsets.all(isSmall ? 16 : 24),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: _purple,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.black12),
           ),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Container(
-              width: 52, height: 52,
+              width: isSmall ? 44 : 52, height: isSmall ? 44 : 52,
               decoration: BoxDecoration(
-                color: _penaltyRed.withOpacity(0.12),
+                color: Colors.orangeAccent.withOpacity(0.2),
                 shape: BoxShape.circle,
-                border: Border.all(color: _penaltyRed, width: 1.5),
+                border: Border.all(color: Colors.orangeAccent, width: 1.5),
               ),
-              child: const Icon(Icons.timer_off, color: _penaltyRed, size: 26),
+              child: Icon(Icons.timer_off, color: Colors.orangeAccent, size: isSmall ? 22 : 26),
             ),
-            const SizedBox(height: 14),
-            const Text(
+            SizedBox(height: isSmall ? 10 : 14),
+            Text(
               "YOU'VE BEEN AWAY FOR A WHILE",
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Color(0xFF1A1A2E),
-                fontSize: 14,
+                color: Colors.white,
+                fontSize: isSmall ? 12 : 14,
                 fontWeight: FontWeight.w900,
                 letterSpacing: 0.5,
               ),
             ),
-            const SizedBox(height: 8),
-            const Text(
+            SizedBox(height: isSmall ? 6 : 8),
+            Text(
               "The match timer was paused. What would you like to do with the current scores?",
               textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF9E9E9E), fontSize: 12, height: 1.5),
+              style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: isSmall ? 11 : 12, height: 1.5),
             ),
-            const SizedBox(height: 20),
+            SizedBox(height: isSmall ? 14 : 20),
             GestureDetector(
               onTap: () => Navigator.pop(ctx),
               child: Container(
-                width: double.infinity, height: 44,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: _startGreen,
+                width: double.infinity, height: isSmall ? 38 : 44,
+                        decoration: BoxDecoration(
+                  color: Colors.orangeAccent,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Text('KEEP CURRENT SCORES',
-                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                child: Text('KEEP CURRENT SCORES',
+                    style: TextStyle(color: Colors.white, fontSize: isSmall ? 12 : 13, fontWeight: FontWeight.bold)),
               ),
             ),
-            const SizedBox(height: 10),
+            SizedBox(height: isSmall ? 8 : 10),
             GestureDetector(
               onTap: () {
                 Navigator.pop(ctx);
@@ -560,19 +599,22 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                 _saveMatchState();
               },
               child: Container(
-                width: double.infinity, height: 44,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: _penaltyRed,
+                width: double.infinity, height: isSmall ? 38 : 44,
+                        decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white30),
                 ),
-                child: const Text('RESET SCORES & TIMER',
-                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                child: Text('RESET SCORES & TIMER',
+                    style: TextStyle(color: Colors.white, fontSize: isSmall ? 12 : 13, fontWeight: FontWeight.bold)),
               ),
             ),
           ]),
         ),
-      ),
+        ),
+        ),
+      );
+      },
     );
   }
 
@@ -612,61 +654,69 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
   }
 
   void _showBackWarningDialog() {
+    final safeAreaPad = MediaQuery.of(context).padding;
+    final dialogDx = -(safeAreaPad.left - safeAreaPad.right) / 2;
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => Dialog(
+      builder: (ctx) {
+        final sw = MediaQuery.of(ctx).size.shortestSide;
+        final isSmall = sw < 500;
+        return Dialog(
         backgroundColor: Colors.transparent,
-        child: Container(
-          padding: const EdgeInsets.all(24),
+        insetPadding: EdgeInsets.zero,
+        child: Transform.translate(
+          offset: Offset(dialogDx, 0),
+          child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 340),
+          child: Container(
+          padding: EdgeInsets.all(isSmall ? 16 : 24),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: _purple,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.black12),
           ),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Container(
-              width: 52, height: 52,
+              width: isSmall ? 44 : 52, height: isSmall ? 44 : 52,
               decoration: BoxDecoration(
-                color: _penaltyRed.withOpacity(0.12),
+                color: Colors.orangeAccent.withOpacity(0.2),
                 shape: BoxShape.circle,
-                border: Border.all(color: _penaltyRed, width: 1.5),
+                border: Border.all(color: Colors.orangeAccent, width: 1.5),
               ),
-              child: const Icon(Icons.timer_off, color: _penaltyRed, size: 26),
+              child: Icon(Icons.timer_off, color: Colors.orangeAccent, size: isSmall ? 22 : 26),
             ),
-            const SizedBox(height: 14),
-            const Text(
+            SizedBox(height: isSmall ? 10 : 14),
+            Text(
               'LEAVE THE MATCH?',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Color(0xFF1A1A2E),
-                fontSize: 14,
+                color: Colors.white,
+                fontSize: isSmall ? 12 : 14,
                 fontWeight: FontWeight.w900,
                 letterSpacing: 0.5,
               ),
             ),
-            const SizedBox(height: 8),
-            const Text(
+            SizedBox(height: isSmall ? 6 : 8),
+            Text(
               'The match is still in progress. The timer and scores will be reset. What would you like to do?',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF9E9E9E), fontSize: 12, height: 1.5),
+              style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: isSmall ? 11 : 12, height: 1.5),
             ),
-            const SizedBox(height: 20),
+            SizedBox(height: isSmall ? 14 : 20),
             // Stay and keep scores
             GestureDetector(
               onTap: () => Navigator.pop(ctx),
               child: Container(
-                width: double.infinity, height: 44,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: _startGreen,
+                width: double.infinity, height: isSmall ? 38 : 44,
+                        decoration: BoxDecoration(
+                  color: Colors.orangeAccent,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Text('STAY',
-                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                child: Text('STAY',
+                    style: TextStyle(color: Colors.white, fontSize: isSmall ? 12 : 13, fontWeight: FontWeight.bold)),
               ),
             ),
-            const SizedBox(height: 10),
+            SizedBox(height: isSmall ? 8 : 10),
             // Actually leave
             GestureDetector(
               onTap: () {
@@ -684,19 +734,22 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                 if (mounted) Navigator.pop(context);
               },
               child: Container(
-                width: double.infinity, height: 44,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: _penaltyRed,
+                width: double.infinity, height: isSmall ? 38 : 44,
+                        decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white30),
                 ),
-                child: const Text('BACK',
-                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                child: Text('BACK',
+                    style: TextStyle(color: Colors.white, fontSize: isSmall ? 12 : 13, fontWeight: FontWeight.bold)),
               ),
             ),
           ]),
         ),
-      ),
+        ),
+        ),
+      );
+      },
     );
   }
 
@@ -809,6 +862,9 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
   }
 
   Future<void> _submitScore(BuildContext ctx) async {
+    // ── Duplicate-submission guard ────────────────────────────────────
+    if (_isSubmitting) return;
+
     // ── Validation 1: Timer never started ─────────────────────────
     if (!_hasStarted) {
       _showValidationDialog(
@@ -838,7 +894,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
     if (!captainSigned || !refereeSigned) {
       _showValidationDialog(
         icon: Icons.draw_outlined,
-        iconColor: _penaltyRed,
+        iconColor: Colors.orangeAccent,
         title: 'SIGNATURES REQUIRED',
         message: !captainSigned && !refereeSigned
             ? 'Both the captain and referee signatures are required before submitting.'
@@ -861,9 +917,121 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
           const SnackBar(content: Text('Please select Competition Info.')));
       return;
     }
+
+    // ── Zero-score confirmation ───────────────────────────────────────
+    if (teamAScore == 0 && teamBScore == 0) {
+      final safeAreaPadZ = MediaQuery.of(context).padding;
+      final dialogDxZ = -(safeAreaPadZ.left - safeAreaPadZ.right) / 2;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dlgCtx) => Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: EdgeInsets.zero,
+            child: Transform.translate(
+              offset: Offset(dialogDxZ, 0),
+              child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 340),
+            child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+                color: _purple, borderRadius: BorderRadius.circular(20)),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 52, height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.orangeAccent.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.orangeAccent, width: 1.5),
+                ),
+                child: const Icon(Icons.warning_amber_rounded,
+                    color: Colors.orangeAccent, size: 26),
+              ),
+              const SizedBox(height: 14),
+              const Text('ZERO SCORE',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5)),
+              const SizedBox(height: 8),
+              Text(
+                'Both teams have 0 goals. This may be a mistake. Are you sure you want to submit?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.7),
+                    fontSize: 12,
+                    height: 1.5),
+              ),
+              const SizedBox(height: 20),
+              Row(children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => Navigator.pop(dlgCtx, false),
+                    child: Container(
+                      height: 44, alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white30)),
+                      child: const Text('CANCEL',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => Navigator.pop(dlgCtx, true),
+                    child: Container(
+                      height: 44, alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                          color: Colors.orangeAccent,
+                          borderRadius: BorderRadius.circular(12)),
+                      child: const Text('SUBMIT ANYWAY',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ),
+              ]),
+            ]),
+          ),
+          ),
+          ), // ConstrainedBox+Transform
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
+    if (!mounted) return;
+    setState(() => _isSubmitting = true);
     final rootNav = Navigator.of(context, rootNavigator: true);
     showDialog(context: context, barrierDismissible: false,
         builder: (_) => const Center(child: CircularProgressIndicator()));
+
+    // ── Duplicate-submission check (server-side) ──────────────────────
+    final homeExists = await SoccerScoringApiService.scoreExists(
+        widget.matchId, widget.teamId);
+    if (homeExists) {
+      if (!mounted) return;
+      rootNav.pop(); // dismiss loading dialog
+      setState(() => _isSubmitting = false);
+      _showValidationDialog(
+        icon: Icons.block,
+        iconColor: Colors.orangeAccent,
+        title: 'ALREADY SUBMITTED',
+        message:
+            'A score for this match and team has already been recorded. Duplicate submissions are not allowed.',
+      );
+      return;
+    }
 
     final dur = '${(elapsed ~/ 60).toString().padLeft(2,'0')}:${(elapsed % 60).toString().padLeft(2,'0')}';
 
@@ -901,6 +1069,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
       Navigator.pop(context, true); // return true → championship marks as scored
     } else {
       if (!mounted) return;
+      setState(() => _isSubmitting = false);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Submission failed.'), backgroundColor: _penaltyRed));
     }
@@ -913,12 +1082,19 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
     required String title,
     required String message,
   }) {
+    final safeAreaPad = MediaQuery.of(context).padding;
+    final dialogDx = -(safeAreaPad.left - safeAreaPad.right) / 2;
     showDialog(
       context: context,
       barrierDismissible: true,
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
-        child: Container(
+        insetPadding: EdgeInsets.zero,
+        child: Transform.translate(
+          offset: Offset(dialogDx, 0),
+          child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 340),
+          child: Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
               color: _purple, borderRadius: BorderRadius.circular(20)),
@@ -947,8 +1123,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
               onTap: () => Navigator.pop(ctx),
               child: Container(
                 width: double.infinity, height: 44,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
+                        decoration: BoxDecoration(
                     color: iconColor, borderRadius: BorderRadius.circular(12)),
                 child: const Text('OK',
                     style: TextStyle(color: Colors.white,
@@ -957,6 +1132,8 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
             ),
           ]),
         ),
+        ),
+        ), // ConstrainedBox+Transform
       ),
     );
   }
@@ -964,12 +1141,19 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
   // Overtime / extra time dialog — shown when timer ends and scores are tied
   void _showOvertimeDialog() {
     if (!mounted) return;
+    final safeAreaPad = MediaQuery.of(context).padding;
+    final dialogDx = -(safeAreaPad.left - safeAreaPad.right) / 2;
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
-        child: Container(
+        insetPadding: EdgeInsets.zero,
+        child: Transform.translate(
+          offset: Offset(dialogDx, 0),
+          child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 340),
+          child: Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
               color: _purple, borderRadius: BorderRadius.circular(20)),
@@ -1008,8 +1192,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
               },
               child: Container(
                 width: double.infinity, height: 46,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
+                        decoration: BoxDecoration(
                     color: Colors.orangeAccent,
                     borderRadius: BorderRadius.circular(12)),
                 child: const Row(
@@ -1034,8 +1217,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
               },
               child: Container(
                 width: double.infinity, height: 46,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
+                        decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: Colors.white30),
@@ -1047,6 +1229,8 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
             ),
           ]),
         ),
+        ),
+        ), // ConstrainedBox+Transform
       ),
     );
   }
@@ -1060,22 +1244,32 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
     int tempMinutes = _remainingSeconds ~/ 60;
     int tempSeconds = _remainingSeconds % 60;
 
+    final safeAreaPad = MediaQuery.of(context).padding;
+    final dialogDx = -(safeAreaPad.left - safeAreaPad.right) / 2;
     showDialog(
       context: context,
       barrierDismissible: true,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => Dialog(
+        builder: (ctx, setDialogState) {
+          final sw = MediaQuery.of(ctx).size.shortestSide;
+          final isSmall = sw < 500;
+          return Dialog(
           backgroundColor: Colors.transparent,
-          child: Container(
-            padding: const EdgeInsets.all(24),
+          insetPadding: EdgeInsets.zero,
+            child: Transform.translate(
+              offset: Offset(dialogDx, 0),
+              child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Container(
+            padding: EdgeInsets.all(isSmall ? 16 : 24),
             decoration: BoxDecoration(
                 color: _purple, borderRadius: BorderRadius.circular(20)),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               // Title
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                 const SizedBox(width: 32),
-                const Text('SET TIMER',
-                    style: TextStyle(color: Colors.white, fontSize: 16,
+                Text('SET TIMER',
+                    style: TextStyle(color: Colors.white, fontSize: isSmall ? 14 : 16,
                         fontWeight: FontWeight.w900, letterSpacing: 1)),
                 GestureDetector(
                     onTap: () => Navigator.pop(ctx),
@@ -1083,8 +1277,10 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
               ]),
               const Divider(color: Colors.white24, height: 20),
 
-              // Minutes and Seconds pickers
-              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              // Minutes and Seconds pickers — FittedBox prevents overflow on narrow screens
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                 // Minutes
                 Column(children: [
                   const Text('MIN', style: TextStyle(color: Colors.white70,
@@ -1099,8 +1295,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                     const SizedBox(width: 10),
                     Container(
                       width: 72, height: 56,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
+                                    decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.25),
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: Colors.white38, width: 1.5),
@@ -1139,8 +1334,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                     const SizedBox(width: 10),
                     Container(
                       width: 72, height: 56,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
+                                    decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.25),
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: Colors.white38, width: 1.5),
@@ -1159,8 +1353,9 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                   ]),
                 ]),
               ]),
+              ),
 
-              const SizedBox(height: 24),
+              SizedBox(height: isSmall ? 16 : 24),
               // Confirm button
               GestureDetector(
                 onTap: () {
@@ -1172,18 +1367,20 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                 },
                 child: Container(
                   width: double.infinity,
-                  height: 46,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
+                  height: isSmall ? 40 : 46,
+                            decoration: BoxDecoration(
                       color: _confirmPurple, borderRadius: BorderRadius.circular(12)),
-                  child: const Text('CONFIRM',
+                  child: Text('CONFIRM',
                       style: TextStyle(color: Colors.white,
-                          fontSize: 15, fontWeight: FontWeight.bold)),
+                          fontSize: isSmall ? 13 : 15, fontWeight: FontWeight.bold)),
                 ),
               ),
             ]),
           ),
-        ),
+          ),
+          ),
+        );
+        },
       ),
     );
   }
@@ -1191,83 +1388,97 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
   // SET popup → signature + submit
   // SET button → signature + submit popup
   void _showSetPopup() {
+    final safeAreaPad = MediaQuery.of(context).padding;
+    final dialogDx = -(safeAreaPad.left - safeAreaPad.right) / 2;
     showDialog(
       context: context,
       barrierDismissible: true,
-      builder: (ctx) => Dialog(
+      builder: (ctx) {
+        final mq = MediaQuery.of(ctx);
+        final sw = mq.size.shortestSide;
+        final isSmall = sw < 500;
+        return Dialog(
         backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(color: _purple, borderRadius: BorderRadius.circular(20)),
-          child: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-            // Title
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              const SizedBox(width: 32),
-              const Text('MATCH SUMMARY',
-                  style: TextStyle(color: Colors.white, fontSize: 15,
-                      fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
-              GestureDetector(onTap: () => Navigator.pop(ctx),
-                  child: const Icon(Icons.close, color: Colors.white)),
-            ]),
-            const Divider(color: Colors.white24, height: 16),
-            RepaintBoundary(
-              key: _globalKey,
-              child: Container(
-                color: _purple, padding: const EdgeInsets.all(10),
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  // Score
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(12)),
-                    child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-                      Expanded(child: Text(
-                        widget.homeTeamName.isNotEmpty ? widget.homeTeamName : (_team?.teamName ?? '—'),
-                        textAlign: TextAlign.center, maxLines: 2,
-                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
-                      )),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Text('$teamAScore  –  $teamBScore',
-                            style: const TextStyle(color: Colors.white, fontSize: 30,
-                                fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
-                      ),
-                      Expanded(child: Text(
-                        widget.awayTeamName.isNotEmpty ? widget.awayTeamName : (_awayTeam?.teamName ?? '—'),
-                        textAlign: TextAlign.center, maxLines: 2,
-                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
-                      )),
-                    ]),
-                  ),
-                  const SizedBox(height: 4),
-                  Text('MATCH ${_match?.matchId ?? '—'}  •  TIME $_mm:$_ss',
-                      style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                  const SizedBox(height: 12),
-                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Expanded(child: SoccerSignaturePad(delegate: _captainDelegate, label: 'CAPTAIN A SIGNATURE')),
-                    const SizedBox(width: 12),
-                    Expanded(child: SoccerSignaturePad(delegate: _refereeDelegate, label: 'REFEREE SIGNATURE')),
-                  ]),
-                  const SizedBox(height: 10),
-                  const Text(
-                    'I confirm that I have examined the scores and am willing to submit them without any alterations.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold),
-                  ),
-                ]),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Builder(builder: (localCtx) => Row(children: [
-              Expanded(child: _popupBtn('SAVE', _saveGreen, () => _saveToGallery(localCtx))),
-              const SizedBox(width: 10),
-              Expanded(child: _popupBtn('SUBMIT', _confirmPurple, () => _submitScore(localCtx))),
-            ])),
-          ]),
+        insetPadding: EdgeInsets.zero,
+        child: Transform.translate(
+          offset: Offset(dialogDx, 0),
+          child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: isSmall ? mq.size.width * 0.92 : 520,
+            maxHeight: mq.size.height * 0.92,
           ),
+          child: Container(
+          padding: EdgeInsets.all(isSmall ? 14 : 20),
+          decoration: BoxDecoration(color: _purple, borderRadius: BorderRadius.circular(20)),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+          // Title
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const SizedBox(width: 32),
+            Text('MATCH SUMMARY',
+                style: TextStyle(color: Colors.white, fontSize: isSmall ? 13 : 15,
+                    fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
+            GestureDetector(onTap: () => Navigator.pop(ctx),
+                child: const Icon(Icons.close, color: Colors.white)),
+          ]),
+          Divider(color: Colors.white24, height: isSmall ? 10 : 16),
+          RepaintBoundary(
+            key: _globalKey,
+            child: Container(
+              color: _purple, padding: EdgeInsets.all(isSmall ? 6 : 10),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                // Score
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: isSmall ? 8 : 16, vertical: isSmall ? 6 : 10),
+                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(12)),
+                  child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                    Expanded(child: Text(
+                      widget.homeTeamName.isNotEmpty ? widget.homeTeamName : (_team?.teamName ?? '—'),
+                      textAlign: TextAlign.center, maxLines: 2,
+                      style: TextStyle(color: Colors.white, fontSize: isSmall ? 11 : 13, fontWeight: FontWeight.bold),
+                    )),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: isSmall ? 8 : 16),
+                      child: Text('$teamAScore  –  $teamBScore',
+                          style: TextStyle(color: Colors.white, fontSize: isSmall ? 22 : 30,
+                              fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
+                    ),
+                    Expanded(child: Text(
+                      widget.awayTeamName.isNotEmpty ? widget.awayTeamName : (_awayTeam?.teamName ?? '—'),
+                      textAlign: TextAlign.center, maxLines: 2,
+                      style: TextStyle(color: Colors.white, fontSize: isSmall ? 11 : 13, fontWeight: FontWeight.bold),
+                    )),
+                  ]),
+                ),
+                SizedBox(height: isSmall ? 2 : 4),
+                Text('MATCH ${_match?.matchId ?? '—'}  •  TIME $_mm:$_ss',
+                    style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                SizedBox(height: isSmall ? 8 : 12),
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Expanded(child: SoccerSignaturePad(delegate: _captainDelegate, label: 'CAPTAIN SIGNATURE')),
+                  const SizedBox(width: 12),
+                  Expanded(child: SoccerSignaturePad(delegate: _refereeDelegate, label: 'REFEREE SIGNATURE')),
+                ]),
+                SizedBox(height: isSmall ? 6 : 10),
+                const Text(
+                  'I confirm that I have examined the scores and am willing to submit them without any alterations.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold),
+                ),
+              ]),
+            ),
+          ),
+          SizedBox(height: isSmall ? 8 : 12),
+          Builder(builder: (localCtx) => Row(children: [
+            Expanded(child: _popupBtn('SAVE', _saveGreen, () => _saveToGallery(localCtx))),
+            const SizedBox(width: 10),
+            Expanded(child: _popupBtn('SUBMIT', _confirmPurple, () => _submitScore(localCtx))),
+          ])),
+        ]),
         ),
-      ),
+        ),
+        ), // ConstrainedBox+Transform
+      );
+      },
     );
   }
 
@@ -1320,24 +1531,27 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
             color: _purple,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(children: [
-              // BACK
-              GestureDetector(
-                onTap: _handleBackPress,
-                child: Row(children: [
-                  Container(
-                    width: 30, height: 30,
-                    decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                    child: const Center(
-                      child: Icon(Icons.arrow_back_ios_new_rounded, color: _purple, size: 14),
+              // BACK — fixed width so the spacer on the right can match it exactly
+              SizedBox(
+                width: 80,
+                child: GestureDetector(
+                  onTap: _handleBackPress,
+                  child: Row(children: [
+                    Container(
+                      width: 30, height: 30,
+                      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                      child: const Center(
+                        child: Icon(Icons.arrow_back_ios_new_rounded, color: _purple, size: 14),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Text('BACK',
-                      style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
-                ]),
+                    const SizedBox(width: 8),
+                    const Text('BACK',
+                        style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+                  ]),
+                ),
               ),
 
-              // TIMER — centered, single box
+              // TIMER — fills remaining space and is centered in it
               Expanded(
                 child: Center(
                   child: Container(
@@ -1359,7 +1573,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                 ),
               ),
 
-              // spacer to balance BACK button width
+              // Exact same width as the BACK button so timer is perfectly centered
               const SizedBox(width: 80),
             ]),
           ),
@@ -1394,9 +1608,9 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
 
           // ── BOTTOM BAR: START │ SET │ RESET ─────────────────────
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 10),
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-              _bottomBtn(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(children: [
+              Expanded(child: _bottomBtn(
                 label: _timerRunning ? 'PAUSE' : 'START',
                 color: _timerRunning ? _pauseRed : _startGreen,
                 icon: _timerRunning ? Icons.pause_rounded : Icons.play_arrow_rounded,
@@ -1407,14 +1621,16 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                   });
                   _saveMatchState();
                 },
-              ),
-              _bottomBtn(
+              )),
+              const SizedBox(width: 8),
+              Expanded(child: _bottomBtn(
                 label: 'SET',
                 color: _purple,
                 icon: Icons.timer_outlined,
                 onTap: _showSetTimerDialog,
-              ),
-              _bottomBtn(
+              )),
+              const SizedBox(width: 8),
+              Expanded(child: _bottomBtn(
                 label: 'RESET',
                 color: _resetPurple,
                 icon: Icons.refresh_rounded,
@@ -1426,19 +1642,30 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                   });
                   _MatchStatePersistence.clear(widget.matchId); // wipe saved state
                 },
-              ),
-              _bottomBtn(
+              )),
+              const SizedBox(width: 8),
+              Expanded(child: _bottomBtn(
                 label: 'SWAP',
                 color: _swapGold,
                 icon: Icons.swap_horiz_rounded,
                 onTap: () async {
+                  final safeAreaPadS = MediaQuery.of(context).padding;
+                  final dialogDxS = -(safeAreaPadS.left - safeAreaPadS.right) / 2;
                   final confirmed = await showDialog<bool>(
                     context: context,
                     barrierDismissible: false,
-                    builder: (ctx) => Dialog(
+                    builder: (ctx) {
+                      final sw = MediaQuery.of(ctx).size.shortestSide;
+                      final isSmall = sw < 500;
+                      return Dialog(
                       backgroundColor: Colors.transparent,
-                      child: Container(
-                        padding: const EdgeInsets.all(24),
+                      insetPadding: EdgeInsets.zero,
+                      child: Transform.translate(
+                        offset: Offset(dialogDxS, 0),
+                        child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 440),
+                        child: Container(
+                        padding: EdgeInsets.all(isSmall ? 16 : 24),
                         decoration: BoxDecoration(
                           color: _purple,
                           borderRadius: BorderRadius.circular(20),
@@ -1448,26 +1675,26 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                           children: [
                             // Icon
                             Container(
-                              width: 56, height: 56,
+                              width: isSmall ? 44 : 56, height: isSmall ? 44 : 56,
                               decoration: BoxDecoration(
                                 color: _swapGold.withOpacity(0.2),
                                 shape: BoxShape.circle,
                                 border: Border.all(color: _swapGold, width: 2),
                               ),
-                              child: const Icon(Icons.swap_horiz_rounded,
-                                  color: _swapGold, size: 30),
+                              child: Icon(Icons.swap_horiz_rounded,
+                                  color: _swapGold, size: isSmall ? 22 : 30),
                             ),
-                            const SizedBox(height: 16),
+                            SizedBox(height: isSmall ? 10 : 16),
                             // Title
-                            const Text('SWAP SIDES?',
+                            Text('SWAP SIDES?',
                                 style: TextStyle(color: Colors.white,
-                                    fontSize: 16, fontWeight: FontWeight.w900,
+                                    fontSize: isSmall ? 13 : 16, fontWeight: FontWeight.w900,
                                     letterSpacing: 1)),
-                            const SizedBox(height: 8),
+                            SizedBox(height: isSmall ? 6 : 8),
                             // Current assignment
                             Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 10),
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: isSmall ? 10 : 16, vertical: isSmall ? 6 : 10),
                               decoration: BoxDecoration(
                                 color: Colors.black.withOpacity(0.2),
                                 borderRadius: BorderRadius.circular(12),
@@ -1496,29 +1723,28 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                                 ],
                               ),
                             ),
-                            const SizedBox(height: 6),
+                            SizedBox(height: isSmall ? 4 : 6),
                             Text('This will be saved and cannot be\nautomatically undone.',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                     color: Colors.white.withOpacity(0.55),
-                                    fontSize: 10)),
-                            const SizedBox(height: 20),
+                                    fontSize: isSmall ? 9 : 10)),
+                            SizedBox(height: isSmall ? 14 : 20),
                             // Buttons
                             Row(children: [
                               Expanded(
                                 child: GestureDetector(
                                   onTap: () => Navigator.pop(ctx, false),
                                   child: Container(
-                                    height: 44,
-                                    alignment: Alignment.center,
-                                    decoration: BoxDecoration(
+                                    height: isSmall ? 38 : 44,
+                                                                decoration: BoxDecoration(
                                       color: Colors.white.withOpacity(0.12),
                                       borderRadius: BorderRadius.circular(12),
                                       border: Border.all(color: Colors.white30),
                                     ),
-                                    child: const Text('CANCEL',
+                                    child: Text('CANCEL',
                                         style: TextStyle(color: Colors.white,
-                                            fontSize: 13,
+                                            fontSize: isSmall ? 12 : 13,
                                             fontWeight: FontWeight.bold)),
                                   ),
                                 ),
@@ -1528,15 +1754,14 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                                 child: GestureDetector(
                                   onTap: () => Navigator.pop(ctx, true),
                                   child: Container(
-                                    height: 44,
-                                    alignment: Alignment.center,
-                                    decoration: BoxDecoration(
+                                    height: isSmall ? 38 : 44,
+                                                                decoration: BoxDecoration(
                                       color: _swapGold,
                                       borderRadius: BorderRadius.circular(12),
                                     ),
-                                    child: const Text('SWAP',
+                                    child: Text('SWAP',
                                         style: TextStyle(color: Colors.white,
-                                            fontSize: 13,
+                                            fontSize: isSmall ? 12 : 13,
                                             fontWeight: FontWeight.bold)),
                                   ),
                                 ),
@@ -1545,10 +1770,14 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                           ],
                         ),
                       ),
-                    ),
+                      ),
+                      ),
+                    );
+                    },
                   );
                   if (confirmed != true || !mounted) return;
                   final swapped = _colors!.swapped();
+                  // ignore: use_build_context_synchronously
                   final messenger = ScaffoldMessenger.of(context);
                   await swapped.save(widget.matchId);
                   if (!mounted) return;
@@ -1565,13 +1794,14 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                         borderRadius: BorderRadius.circular(10)),
                   ));
                 },
-              ),
-              _bottomBtn(
+              )),
+              const SizedBox(width: 8),
+              Expanded(child: _bottomBtn(
                 label: 'CONFIRM',
                 color: _confirmPurple,
                 icon: Icons.check_rounded,
                 onTap: _showSetPopup,
-              ),
+              )),
             ]),
           ),
 
@@ -1602,11 +1832,14 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Flexible(
-                child: Text(teamName,
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900,
-                        color: color, letterSpacing: 0.5)),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(teamName,
+                      maxLines: 1,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900,
+                          color: color, letterSpacing: 0.5)),
+                ),
               ),
               const SizedBox(width: 8),
               Container(
@@ -1627,8 +1860,7 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
           Expanded(
             child: Container(
               width: double.infinity,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
+                    decoration: BoxDecoration(
                 color: Colors.white,
                 border: Border.all(color: color, width: 3),
                 borderRadius: BorderRadius.circular(16),
@@ -1692,18 +1924,33 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
   Widget _bottomBtn({
     required String label, required Color color,
     required IconData icon, required VoidCallback onTap,
-  }) =>
-      GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
-          decoration: BoxDecoration(
-              color: color, borderRadius: BorderRadius.circular(30),
-              boxShadow: [BoxShadow(color: color.withOpacity(0.4), blurRadius: 8, offset: const Offset(0, 3))]),
-          child: Text(label, style: const TextStyle(
-              color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
-        ),
-      );
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Builder(
+        builder: (context) {
+          final isSmall = MediaQuery.of(context).size.width < 600;
+          return Container(
+            width: double.infinity,
+            padding: EdgeInsets.symmetric(
+              horizontal: 4,
+              vertical: isSmall ? 7 : 10,
+            ),
+            decoration: BoxDecoration(
+                color: color, borderRadius: BorderRadius.circular(30),
+                boxShadow: [BoxShadow(color: color.withOpacity(0.4), blurRadius: 8, offset: const Offset(0, 3))]),
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(label, style: TextStyle(
+                    color: Colors.white, fontSize: isSmall ? 11 : 14, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   Widget _swapPreviewTeam({
     required String label,

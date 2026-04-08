@@ -152,6 +152,19 @@ class ScoringApiService {
     throw Exception('get_rounds failed [${response.statusCode}]: ${response.body}');
   }
 
+  // GET check whether a score already exists for this match + team
+  static Future<bool> scoreExists(int matchId, int teamId) async {
+    final response = await _get('check_score', {
+      'match_id': '$matchId',
+      'team_id':  '$teamId',
+    });
+    if (response.statusCode == 200) {
+      final body = json.decode(response.body);
+      return (body['exists'] == true || body['exists'] == 1);
+    }
+    return false; // on error, allow submission to proceed
+  }
+
   // POST submit score
   static Future<bool> submitScore({
     required int matchId,
@@ -415,6 +428,9 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
   final SaveDelegate _refereeDelegate = SaveDelegate();
   final GlobalKey _globalKey = GlobalKey();
 
+  // ── Submission guard ─────────────────────────
+  bool _isSubmitting = false;
+
   // ── Mission counters ─────────────────────────
   int m01Qty = 0, m02Qty = 0, m03Qty = 0, m04Qty = 0, m05Qty = 0,
       violations = 0;
@@ -436,6 +452,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
   int _remainingSeconds = 240; // fixed 4:00 minutes
   final int _totalSeconds = 240;
   Timer? _countdownTimer;
+  bool _wasBackgrounded = false; // true only when timer was stopped due to AppLifecycle.paused
   DateTime? _backgroundedAt; // tracks when the app was backgrounded
 
   void _startTimer() {
@@ -491,27 +508,40 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
+    void didChangeAppLifecycleState(AppLifecycleState state) {
+    // `inactive` fires for notification panel, recent-apps switcher, and
+    // incoming calls — the user hasn't left the app, so the timer must keep
+    // running through those transient states. Do NOT stop the timer here.
+    //
+    // `paused` fires only when the app is truly backgrounded (home button,
+    // switched to another app). Stop the ticker and record time here.
+    //
+    // `resumed` fires when returning from EITHER inactive OR paused.
+    // Only show the away-warning if we actually went to background (_wasBackgrounded).
+    if (state == AppLifecycleState.paused) {
       if (_timerRunning) {
         setState(() => _timerRunning = false);
         _countdownTimer?.cancel();
         _saveMatchState();
+        _wasBackgrounded = true;
       }
       _backgroundedAt = DateTime.now();
     } else if (state == AppLifecycleState.resumed) {
-      final bg = _backgroundedAt;
-      _backgroundedAt = null;
-      if (bg != null) {
-        final away = DateTime.now().difference(bg);
-        if (away.inSeconds >= 60 && _hasStarted && mounted) {
-          _showAwayWarningDialog();
+      if (_wasBackgrounded) {
+        _wasBackgrounded = false;
+        final bg = _backgroundedAt;
+        _backgroundedAt = null;
+        if (bg != null) {
+          final away = DateTime.now().difference(bg);
+          if (away.inSeconds >= 60 && _hasStarted && mounted) {
+            _showAwayWarningDialog();
+          }
         }
       }
+      // If _wasBackgrounded is false we came back from `inactive`
+      // (notification panel / recent-apps peek) — nothing to do.
     }
   }
-
   void _showAwayWarningDialog() {
     showDialog(
       context: context,
@@ -521,36 +551,35 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
         child: Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: primaryPurple,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.black12),
           ),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Container(
               width: 52, height: 52,
               decoration: BoxDecoration(
-                color: penaltyRed.withOpacity(0.12),
+                color: Colors.orangeAccent.withOpacity(0.2),
                 shape: BoxShape.circle,
-                border: Border.all(color: penaltyRed, width: 1.5),
+                border: Border.all(color: Colors.orangeAccent, width: 1.5),
               ),
-              child: const Icon(Icons.timer_off, color: penaltyRed, size: 26),
+              child: const Icon(Icons.timer_off, color: Colors.orangeAccent, size: 26),
             ),
             const SizedBox(height: 14),
             const Text(
               "YOU'VE BEEN AWAY FOR A WHILE",
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Color(0xFF1A1A2E),
+                color: Colors.white,
                 fontSize: 14,
                 fontWeight: FontWeight.w900,
                 letterSpacing: 0.5,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               "The match timer was paused. What would you like to do with the current scores?",
               textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF9E9E9E), fontSize: 12, height: 1.5),
+              style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12, height: 1.5),
             ),
             const SizedBox(height: 20),
             GestureDetector(
@@ -559,7 +588,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
                 width: double.infinity, height: 44,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: startGreen,
+                  color: Colors.orangeAccent,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Text('KEEP CURRENT SCORES',
@@ -584,8 +613,9 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
                 width: double.infinity, height: 44,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: penaltyRed,
+                  color: Colors.white.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white30),
                 ),
                 child: const Text('RESET SCORES & TIMER',
                     style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
@@ -615,36 +645,35 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
         child: Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: primaryPurple,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.black12),
           ),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Container(
               width: 52, height: 52,
               decoration: BoxDecoration(
-                color: penaltyRed.withOpacity(0.12),
+                color: Colors.orangeAccent.withOpacity(0.2),
                 shape: BoxShape.circle,
-                border: Border.all(color: penaltyRed, width: 1.5),
+                border: Border.all(color: Colors.orangeAccent, width: 1.5),
               ),
-              child: const Icon(Icons.timer_off, color: penaltyRed, size: 26),
+              child: const Icon(Icons.timer_off, color: Colors.orangeAccent, size: 26),
             ),
             const SizedBox(height: 14),
             const Text(
               'LEAVE THE MATCH?',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Color(0xFF1A1A2E),
+                color: Colors.white,
                 fontSize: 14,
                 fontWeight: FontWeight.w900,
                 letterSpacing: 0.5,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'The match is still in progress. The timer and will be reset. What would you like to do?',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF9E9E9E), fontSize: 12, height: 1.5),
+              style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12, height: 1.5),
             ),
             const SizedBox(height: 20),
             GestureDetector(
@@ -653,7 +682,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
                 width: double.infinity, height: 44,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: startGreen,
+                  color: Colors.orangeAccent,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Text('STAY',
@@ -679,8 +708,9 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
                 width: double.infinity, height: 44,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: penaltyRed,
+                  color: Colors.white.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white30),
                 ),
                 child: const Text('BACK',
                     style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
@@ -816,32 +846,31 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
         child: Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.black12)),
+              color: primaryPurple,
+              borderRadius: BorderRadius.circular(20)),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Container(
               width: 52, height: 52,
               decoration: BoxDecoration(
-                color: iconColor.withOpacity(0.12),
+                color: Colors.orangeAccent.withOpacity(0.2),
                 shape: BoxShape.circle,
-                border: Border.all(color: iconColor, width: 1.5),
+                border: Border.all(color: Colors.orangeAccent, width: 1.5),
               ),
-              child: Icon(icon, color: iconColor, size: 26),
+              child: Icon(icon, color: Colors.orangeAccent, size: 26),
             ),
             const SizedBox(height: 14),
             Text(title,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                    color: Color(0xFF1A1A2E),
+                    color: Colors.white,
                     fontSize: 14,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 0.5)),
             const SizedBox(height: 8),
             Text(message,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                    color: Color(0xFF9E9E9E), fontSize: 12, height: 1.5)),
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.7), fontSize: 12, height: 1.5)),
             const SizedBox(height: 20),
             GestureDetector(
               onTap: () => Navigator.pop(ctx),
@@ -849,7 +878,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
                 width: double.infinity, height: 44,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                    color: iconColor,
+                    color: Colors.orangeAccent,
                     borderRadius: BorderRadius.circular(12)),
                 child: const Text('OK',
                     style: TextStyle(
@@ -865,6 +894,9 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
   }
 
   Future<void> _submitScore(BuildContext localContext) async {
+    // ── Duplicate-submission guard ────────────────────────────────────
+    if (_isSubmitting) return;
+
     // ── Validate signatures ───────────────────────────────────────────
     final captainSigned = _captainDelegate.points.any((p) => p != null);
     final refereeSigned = _refereeDelegate.points.any((p) => p != null);
@@ -888,6 +920,90 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
       return;
     }
 
+    // ── Zero-score confirmation ───────────────────────────────────────
+    if (totalScore <= 0) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => Dialog(
+          backgroundColor: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+                color: primaryPurple, borderRadius: BorderRadius.circular(20)),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 52, height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.orangeAccent.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.orangeAccent, width: 1.5),
+                ),
+                child: const Icon(Icons.warning_amber_rounded,
+                    color: Colors.orangeAccent, size: 26),
+              ),
+              const SizedBox(height: 14),
+              const Text('ZERO TOTAL SCORE',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5)),
+              const SizedBox(height: 8),
+              Text(
+                'The total score is 0. This may be a mistake. Are you sure you want to submit?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.7),
+                    fontSize: 12,
+                    height: 1.5),
+              ),
+              const SizedBox(height: 20),
+              Row(children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => Navigator.pop(ctx, false),
+                    child: Container(
+                      height: 44, alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white30)),
+                      child: const Text('CANCEL',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => Navigator.pop(ctx, true),
+                    child: Container(
+                      height: 44, alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                          color: Colors.orangeAccent,
+                          borderRadius: BorderRadius.circular(12)),
+                      child: const Text('SUBMIT ANYWAY',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ),
+              ]),
+            ]),
+          ),
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
+    setState(() => _isSubmitting = true);
     final rootNav = Navigator.of(context, rootNavigator: true);
 
     // Show loading indicator
@@ -896,6 +1012,23 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
+
+    // ── Duplicate-submission check (server-side) ──────────────────────
+    final alreadyExists = await ScoringApiService.scoreExists(
+        widget.matchId, widget.teamId);
+    if (alreadyExists) {
+      if (!mounted) return;
+      rootNav.pop(); // dismiss loading dialog
+      setState(() => _isSubmitting = false);
+      _showValidationDialog(
+        icon: Icons.block,
+        iconColor: penaltyRed,
+        title: 'ALREADY SUBMITTED',
+        message:
+            'A score for this match and team has already been recorded. Duplicate submissions are not allowed.',
+      );
+      return;
+    }
 
     final success = await ScoringApiService.submitScore(
       matchId: widget.matchId,
@@ -927,6 +1060,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
       rootNav.pop();
       rootNav.pop();
     } else {
+      setState(() => _isSubmitting = false);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Submission failed. Please try again.'),
         backgroundColor: penaltyRed,
