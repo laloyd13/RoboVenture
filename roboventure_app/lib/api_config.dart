@@ -5,7 +5,7 @@
 
 class ApiConfig {
   // ── Server ────────────────────────────────────────────────────────────────
-  static const String _host = 'http://192.168.254.101'; // <-- replace with your server IP or hostname
+  static const String _host = 'http://192.168.254.103'; // <-- replace with your server IP or hostname
 
   // ── Base path ─────────────────────────────────────────────────────────────
   static const String _basePath = '/roboventure_api';
@@ -36,9 +36,16 @@ class ApiConfig {
   static const String getGroupCount = '$baseUrl/get_group_count.php';
 
   /// championship_sched.dart / get_score.php
-  /// GET ?category_id=N | ?match_id=N | ?category_id=N&bracket_type=<round>
+  /// GET ?category_id=N | ?match_id=N | ?category_id=N&bracket_type=`<round>`
   static const String getScore = '$baseUrl/get_score.php';
 
-
   static const String advanceKnockout = '$baseUrl/advance_knockout.php';
+
+  static const String cleanupChampionshipSeeds = '$baseUrl/cleanup_champ_seeds.php';
+
+  /// qualification_sched.dart → _ScheduleApiService.fetchGroupStandings()
+  /// GET ?category_id=N  →  [ { group_label, team_id, team_name, mp, w, d, l, gf, ga, gd, pts } ]
+  static const String getGroupStandings = '$baseUrl/get_group_standings.php';
+
+  static const String getChampionshipMatchShells = '$baseUrl/get_championship_match_shells.php';
 }

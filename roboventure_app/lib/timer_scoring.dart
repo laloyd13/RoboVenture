@@ -6,7 +6,6 @@ import 'dart:ui' as ui;
 import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
-import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
@@ -347,9 +346,7 @@ class _TimerScoringPageState extends State<TimerScoringPage>
   TimerRefereeInfo?  _referee;
   TimerTeamInfo?     _team;
 
-  List<TimerCategoryInfo> _categories = [];
   TimerCategoryInfo?      _selectedCategory;
-  List<TimerRoundInfo>    _rounds = [];
   TimerRoundInfo?         _selectedRound;
 
   @override
@@ -423,9 +420,7 @@ class _TimerScoringPageState extends State<TimerScoringPage>
         _match            = match;
         _referee          = referee;
         _team             = team;
-        _categories       = categories;
         _selectedCategory = selCategory;
-        _rounds           = rounds;
         _selectedRound    = rounds.isNotEmpty ? rounds.first : null;
         _loading          = false;
       });
@@ -509,12 +504,7 @@ class _TimerScoringPageState extends State<TimerScoringPage>
     rootNav.pop();
 
     if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Score submitted!'),
-        backgroundColor: _accentGreen,
-      ));
-      rootNav.pop();
-      rootNav.pop();
+      rootNav.pop(true); // return true → qualification screen shows snackbar
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Submission failed. Please try again.'),
@@ -846,12 +836,15 @@ class _TimerScoringPageState extends State<TimerScoringPage>
   // ─────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Scaffold(
-      backgroundColor: _bgDark,
-      body: Center(child: CircularProgressIndicator(color: _accentGreen)),
-    );
+    if (_loading) {
+      return const Scaffold(
+        backgroundColor: _bgDark,
+        body: Center(child: CircularProgressIndicator(color: _accentGreen)),
+      );
+    }
 
-    if (_errorMsg != null) return Scaffold(
+    if (_errorMsg != null) {
+      return Scaffold(
       backgroundColor: _bgDark,
       appBar: AppBar(
         backgroundColor: _accentPurple,
@@ -889,7 +882,8 @@ class _TimerScoringPageState extends State<TimerScoringPage>
           ),
         ]),
       ),
-    );
+      );
+    }
 
     return PopScope(
       canPop: false,
@@ -1040,7 +1034,7 @@ class _TimerScoringPageState extends State<TimerScoringPage>
             // Pulsing dot
             AnimatedBuilder(
               animation: _pulseAnim,
-              builder: (_, __) => Container(
+              builder: (_, _) => Container(
                 width: 7, height: 7,
                 decoration: BoxDecoration(
                   color: _timerRunning

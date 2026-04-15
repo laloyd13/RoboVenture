@@ -3,6 +3,7 @@
 // scoring.php
 //
 // ENDPOINTS
+//   GET  scoring.php?action=check_score&match_id=1&team_id=1
 //   GET  scoring.php?action=get_match&match_id=1
 //   GET  scoring.php?action=get_referee&referee_id=1
 //   GET  scoring.php?action=get_team&team_id=1
@@ -789,6 +790,38 @@ switch ($action) {
 
         $stmt->close();
         $conn->close();
+        break;
+
+    // ── CHECK SCORE ───────────────────────────────────────────────────
+    // GET scoring.php?action=check_score&match_id=47&team_id=12
+    // Returns {"exists": true} if a score row already exists for the
+    // given match_id + team_id combination, {"exists": false} otherwise.
+    case 'check_score':
+        if ($method !== 'GET') { methodNotAllowed(); break; }
+
+        $match_id = intval($_GET['match_id'] ?? 0);
+        $team_id  = intval($_GET['team_id']  ?? 0);
+
+        if ($match_id === 0 || $team_id === 0) {
+            badRequest('match_id and team_id are required');
+            break;
+        }
+
+        $conn = getConnection();
+        $stmt = $conn->prepare(
+            "SELECT COUNT(*) FROM tbl_score
+              WHERE match_id = ?
+                AND team_id  = ?
+              LIMIT 1"
+        );
+        $stmt->bind_param("ii", $match_id, $team_id);
+        $stmt->execute();
+        $row   = $stmt->get_result()->fetch_row();
+        $count = (int)($row[0] ?? 0);
+        $stmt->close();
+        $conn->close();
+
+        echo json_encode(['exists' => $count > 0]);
         break;
 
     // ── UNKNOWN ACTION ────────────────────────────────────────────────

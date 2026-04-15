@@ -1,6 +1,7 @@
 // ignore_for_file: deprecated_member_use
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'soccer_scoring.dart';
@@ -12,8 +13,19 @@ import 'api_config.dart';
 const Color _accentColor = Color(0xFF7D58B3);
 const Color _headerMuted = Color(0xFF9E9EAD);
 
+
 // ─────────────────────────────────────────────
 // BRACKET MODE
+// Determined by group count fetched from get_group_count.php.
+//
+//   2 grp → 4 teams  → SF → 3RD → FINAL
+//   3 grp → 6 teams  → ELIM(3) → QF → 3RD → FINAL
+//   4 grp → 8 teams  → QF → SF → 3RD → FINAL
+//   5 grp → 10 teams → ELIM(2) → QF → SF → FINAL
+//   6 grp → 12 teams → ELIM(4) → QF → SF → FINAL
+//   7 grp → 14 teams → ELIM(6) → QF → SF → FINAL
+//   8 grp → 16 teams → R16(8)  → QF → SF → FINAL
+//   9 grp → 18 teams → ELIM(2) → R16 → QF → SF → FINAL
 // ─────────────────────────────────────────────
 enum _BracketMode {
   oneGroup,
@@ -207,6 +219,23 @@ String _modeBadgeLabel(_BracketMode mode) {
 // API SERVICE
 // ─────────────────────────────────────────────
 class _ChampApiService {
+  /// POSTs to cleanup_champ_seeds.php to remove any championship
+  /// tbl_teamschedule slots whose feeder qualification score no longer
+  /// exists in the DB (e.g. deleted directly via database).
+  /// Called before every load/refresh so match cards show TBD immediately.
+  static Future<void> cleanupOrphanedSeeds(int categoryId) async {
+    try {
+      await http.post(
+        Uri.parse(ApiConfig.cleanupChampionshipSeeds),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'category_id': categoryId}),
+      ).timeout(const Duration(seconds: 10));
+      debugPrint('[champ] cleanupOrphanedSeeds done for category=$categoryId');
+    } catch (e) {
+      debugPrint('[champ] cleanupOrphanedSeeds error: $e');
+    }
+  }
+
   static Future<int> fetchGroupCount(int categoryId) async {
     try {
       final url = Uri.parse(
@@ -235,6 +264,26 @@ class _ChampApiService {
         .map((j) => _ScheduleRow.fromJson(j as Map<String, dynamic>))
         .where((r) => r.bracketType.isNotEmpty && r.bracketType != 'group')
         .toList();
+  }
+
+  /// Fetches every knockout match shell (match_id + bracket_type) directly
+  /// from tbl_match, regardless of whether any team is assigned yet.
+  /// This guarantees TBD cards are always shown even for empty slots.
+  static Future<List<Map<String, dynamic>>> fetchAllKnockoutMatchShells(
+      int categoryId) async {
+    try {
+      final url = Uri.parse(
+          '${ApiConfig.getChampionshipMatchShells}?category_id=$categoryId');
+      final response =
+          await http.get(url).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        return data.cast<Map<String, dynamic>>();
+      }
+    } catch (e) {
+      debugPrint('[fetchAllKnockoutMatchShells] error: $e');
+    }
+    return [];
   }
 
   static Future<Map<int, String>> fetchScoredMatchInfo(
@@ -292,17 +341,62 @@ class _ChampApiService {
     return result;
   }
 
-  // ── FIX 1: Use get_score.php?match_id= for accurate per-match scores ──
-  // This is more reliable than get_scored_matches which returns all matches
-  // and may have ordering/dedup issues when determining winner/loser.
-  static Future<bool> advanceKnockout({
+  // ── Clear teams from a specific match (admin manual clear) ──────────
+  // ignore: unused_element
+  static Future<bool> clearMatchTeams(int matchId, int categoryId) async {
+    try {
+      final url = Uri.parse(ApiConfig.cleanupChampionshipSeeds);
+      final resp = await http.delete(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'match_id': matchId, 'category_id': categoryId}),
+      ).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        final result = json.decode(resp.body) as Map<String, dynamic>;
+        return result['success'] == true;
+      }
+    } catch (e) {
+      debugPrint('[clearMatchTeams] error: $e');
+    }
+    return false;
+  }
+
+  /// Returns the full PHP response map on success, or null on network/HTTP failure.
+  /// The map always contains at least {'success': bool}.
+  /// Group matches return {'status': 'pending'} or {'status': 'group_complete'}.
+  /// Knockout matches return {'status': 'knockout_advanced'} (injected below).
+  static Future<Map<String, dynamic>?> advanceKnockout({
     required int matchId,
     required int homeTeamId,
     required int awayTeamId,
     required int categoryId,
+    required bool isGroupMatch,
   }) async {
     try {
-      // 1. Fetch scores specifically for this match using match_id param
+      // ── GROUP MATCH: let PHP handle scoring/ranking entirely.
+      // We don't pre-compute a winner — PHP reads all group scores itself.
+      if (isGroupMatch) {
+        final advanceUrl = Uri.parse(ApiConfig.advanceKnockout);
+        final body = json.encode({
+          'match_id':       matchId,
+          'winner_team_id': 0,   // ignored by PHP for group matches
+          'loser_team_id':  0,   // ignored by PHP for group matches
+          'category_id':    categoryId,
+        });
+        debugPrint('[advanceKnockout] GROUP POST $advanceUrl body=$body');
+        final resp = await http.post(
+          advanceUrl,
+          headers: {'Content-Type': 'application/json'},
+          body: body,
+        ).timeout(const Duration(seconds: 10));
+        debugPrint('[advanceKnockout] GROUP response [${resp.statusCode}]: ${resp.body}');
+        if (resp.statusCode == 200 || resp.statusCode == 201) {
+          return json.decode(resp.body) as Map<String, dynamic>;
+        }
+        return null;
+      }
+
+      // ── KNOCKOUT MATCH: determine winner/loser from scores first.
       final scoreUrl = Uri.parse(
           '${ApiConfig.getScore}?match_id=$matchId');
       final scoreResp = await http
@@ -311,19 +405,17 @@ class _ChampApiService {
 
       if (scoreResp.statusCode != 200) {
         debugPrint('[advanceKnockout] score fetch failed: ${scoreResp.statusCode}');
-        return false;
+        return null;
       }
 
       final List<dynamic> matchRows = json.decode(scoreResp.body);
       debugPrint('[advanceKnockout] matchId=$matchId rows=${matchRows.length}');
 
-      // FIX 2: Need at least 2 score rows (one per team)
       if (matchRows.length < 2) {
         debugPrint('[advanceKnockout] not enough score rows: ${matchRows.length}');
-        return false;
+        return {'success': false, 'error': 'insufficient_score_rows'};
       }
 
-      // Map teamId → goals (score_independentscore)
       final Map<int, int> teamScores = {};
       for (final j in matchRows) {
         final tid   = int.tryParse(j['team_id'].toString()) ?? 0;
@@ -338,16 +430,14 @@ class _ChampApiService {
 
       debugPrint('[advanceKnockout] home=$homeTeamId ($homeGoals) vs away=$awayTeamId ($awayGoals)');
 
-      // Tied score — cannot advance
       if (homeGoals == awayGoals) {
         debugPrint('[advanceKnockout] TIE — cannot advance');
-        return false;
+        return {'success': false, 'error': 'tie'};
       }
 
       final winnerTeamId = homeGoals > awayGoals ? homeTeamId : awayTeamId;
       final loserTeamId  = homeGoals > awayGoals ? awayTeamId : homeTeamId;
 
-      // 2. Call advance_knockout.php
       final advanceUrl = Uri.parse(ApiConfig.advanceKnockout);
       final body = json.encode({
         'match_id':       matchId,
@@ -356,7 +446,7 @@ class _ChampApiService {
         'category_id':    categoryId,
       });
 
-      debugPrint('[advanceKnockout] POST $advanceUrl body=$body');
+      debugPrint('[advanceKnockout] KNOCKOUT POST $advanceUrl body=$body');
 
       final advanceResp = await http.post(
         advanceUrl,
@@ -364,20 +454,22 @@ class _ChampApiService {
         body: body,
       ).timeout(const Duration(seconds: 10));
 
-      debugPrint('[advanceKnockout] response [${advanceResp.statusCode}]: ${advanceResp.body}');
+      debugPrint('[advanceKnockout] KNOCKOUT response [${advanceResp.statusCode}]: ${advanceResp.body}');
 
       if (advanceResp.statusCode == 200 || advanceResp.statusCode == 201) {
         final result = json.decode(advanceResp.body) as Map<String, dynamic>;
-        final success = result['success'] == true;
-        if (!success) {
+        if (result['success'] == true) {
+          // Inject a status key so _openScoring can identify this case
+          result['status'] = 'knockout_advanced';
+        } else {
           debugPrint('[advanceKnockout] PHP returned success=false: ${result['error'] ?? result['message']}');
         }
-        return success;
+        return result;
       }
-      return false;
+      return null;
     } catch (e, stack) {
       debugPrint('[advanceKnockout] Exception: $e\n$stack');
-      return false;
+      return null;
     }
   }
 }
@@ -385,30 +477,55 @@ class _ChampApiService {
 // ─────────────────────────────────────────────
 // MATCH BUILDER
 // ─────────────────────────────────────────────
-List<_ChampMatch> _pairScheduleRows(List<_ScheduleRow> rows) {
+/// Builds [_ChampMatch] list from assigned-team rows merged with all
+/// knockout match shells.  Shells ensure every match slot renders a card
+/// (as TBD) even when no teams have been seeded into it yet.
+List<_ChampMatch> _pairScheduleRows(
+  List<_ScheduleRow> rows,
+  List<Map<String, dynamic>> shells,
+) {
+  // Index team rows by matchId
   final Map<int, List<_ScheduleRow>> byMatch = {};
   for (final r in rows) {
     byMatch.putIfAbsent(r.matchId, () => []).add(r);
   }
 
+  // Seed every shell match so empty ones still appear
+  for (final shell in shells) {
+    final mid = int.tryParse(shell['match_id'].toString()) ?? 0;
+    if (mid == 0) continue;
+    byMatch.putIfAbsent(mid, () => []); // empty list = TBD both sides
+  }
+
+  // Build a bracketType lookup from shells for matches with no team rows
+  final Map<int, String> shellBracketType = {
+    for (final s in shells)
+      if ((int.tryParse(s['match_id'].toString()) ?? 0) != 0)
+        int.parse(s['match_id'].toString()): s['bracket_type']?.toString() ?? '',
+  };
+
   final List<_ChampMatch> matches = [];
   byMatch.forEach((matchId, pair) {
-    if (pair.isEmpty) return;
-    final first  = pair[0];
+    final bracketType = pair.isNotEmpty
+        ? pair[0].bracketType
+        : (shellBracketType[matchId] ?? '');
+    if (bracketType.isEmpty) return;
+
+    final first  = pair.isNotEmpty ? pair[0] : null;
     final second = pair.length >= 2 ? pair[1] : null;
-    final round  = _uiRoundFromBracketType(first.bracketType);
+    final round  = _uiRoundFromBracketType(bracketType);
 
     matches.add(_ChampMatch(
       matchId:     matchId,
       round:       round,
-      bracketType: first.bracketType,
-      home:        first.teamName,
-      homeId:      first.teamId,
+      bracketType: bracketType,
+      home:        first?.teamName ?? 'TBD',
+      homeId:      first?.teamId   ?? 0,
       away:        second?.teamName ?? 'TBD',
       awayId:      second?.teamId  ?? 0,
-      refereeId:   first.refereeId,
-      arenaNumber: first.arenaNumber,
-      matchTime:   first.matchTime,
+      refereeId:   first?.refereeId   ?? 0,
+      arenaNumber: first?.arenaNumber ?? 0,
+      matchTime:   first?.matchTime   ?? '',
     ));
   });
 
@@ -442,6 +559,8 @@ class _ChampionshipScheduleScreenState
 
   _BracketMode _mode = _BracketMode.fourGroup;
   late TabController _tabController;
+  List<GlobalKey> _tabKeys = [];
+  final GlobalKey _tabBarKey = GlobalKey();
   Key _bracketKey = const ValueKey('default');
 
   bool    _loading = true;
@@ -473,13 +592,21 @@ class _ChampionshipScheduleScreenState
   Future<void> _loadBracket() async {
     setState(() { _loading = true; _error = null; });
     try {
+      // Always run cleanup on load so seeds orphaned by a direct DB score
+      // deletion (outside the app) are cleared when the screen is opened.
+      // cleanup_champ_seeds.php has a fast early-exit guard that makes
+      // this a near-instant no-op when nothing is stale.
+      await _ChampApiService.cleanupOrphanedSeeds(widget.categoryId);
+
       final groupCount =
           await _ChampApiService.fetchGroupCount(widget.categoryId);
       final mode = _modeFromGroupCount(groupCount > 0 ? groupCount : 4);
 
-      final rows = await _ChampApiService.fetchChampionshipSchedule(
+      final rows   = await _ChampApiService.fetchChampionshipSchedule(
           widget.categoryId);
-      final allMatches = _pairScheduleRows(rows);
+      final shells = await _ChampApiService.fetchAllKnockoutMatchShells(
+          widget.categoryId);
+      final allMatches = _pairScheduleRows(rows, shells);
 
       final Map<String, List<_ChampMatch>> byRound = {};
       for (final m in allMatches) {
@@ -500,6 +627,7 @@ class _ChampionshipScheduleScreenState
       final rounds  = _roundsForMode(mode);
       final oldCtrl = _tabController;
       _tabController = TabController(length: rounds.length, vsync: this);
+      _tabKeys = List.generate(rounds.length, (_) => GlobalKey());
       WidgetsBinding.instance
           .addPostFrameCallback((_) => oldCtrl.dispose());
 
@@ -521,9 +649,16 @@ class _ChampionshipScheduleScreenState
   // ── REFRESH ────────────────────────────────────────────────────────
   Future<void> _refreshData() async {
     try {
-      final rows = await _ChampApiService.fetchChampionshipSchedule(
+      // Run cleanup on every refresh so seeds orphaned by a direct DB
+      // score deletion are cleared without needing a full re-open.
+      // The PHP guard makes this a no-op when nothing is stale.
+      await _ChampApiService.cleanupOrphanedSeeds(widget.categoryId);
+
+      final rows   = await _ChampApiService.fetchChampionshipSchedule(
           widget.categoryId);
-      final allMatches = _pairScheduleRows(rows);
+      final shells = await _ChampApiService.fetchAllKnockoutMatchShells(
+          widget.categoryId);
+      final allMatches = _pairScheduleRows(rows, shells);
       final Map<String, List<_ChampMatch>> byRound = {};
       for (final m in allMatches) {
         byRound.putIfAbsent(m.round, () => []).add(m);
@@ -554,7 +689,7 @@ class _ChampionshipScheduleScreenState
       return;
     }
 
-    // Re-score guard
+    // ── RE-SCORE GUARD ───────────────────────────────────────────────────
     final isAlreadyScored = _scoredMatchInfo.containsKey(m.matchId);
     if (isAlreadyScored) {
       final score = _matchScores[m.matchId];
@@ -635,8 +770,13 @@ class _ChampionshipScheduleScreenState
       if (confirmed != true) return;
     }
 
-    // ── FIX 3: Navigate to scoring page and wait for result ──────────
-    // SoccerScoringPage MUST call Navigator.pop(context, true) on submit.
+    if (!mounted) return;
+
+    // Dismiss any visible snackbar immediately so it doesn't linger while
+    // the scoring page is open (matches qualification_sched behaviour).
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+
     final submitted = await Navigator.push<bool>(
         context,
         MaterialPageRoute(
@@ -653,50 +793,177 @@ class _ChampionshipScheduleScreenState
 
     debugPrint('[_openScoring] submitted=$submitted matchId=${m.matchId}');
 
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+
     if (!mounted) return;
 
     if (submitted == true) {
-      // ── FIX 4: Show loading indicator while advancing ─────────────
-      // Give the DB a brief moment to commit before we read scores
-      await Future.delayed(const Duration(milliseconds: 500));
 
-      final advanced = await _ChampApiService.advanceKnockout(
-        matchId:    m.matchId,
-        homeTeamId: m.homeId,
-        awayTeamId: m.awayId,
-        categoryId: widget.categoryId,
-      );
+      final isFinalMatch  = m.bracketType.toLowerCase() == 'final';
+      final isGroupMatch  = m.bracketType.toLowerCase() == 'group';
 
-      debugPrint('[_openScoring] advanced=$advanced');
+      // ── Build the snackbar BEFORE _refreshData() triggers setState,
+      // which would clear any snackbar shown before the rebuild.
+      SnackBar? snackBar;
 
-      if (mounted) {
-        if (advanced) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: const Text('✅ Teams advanced to next round!'),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            duration: const Duration(seconds: 3),
-          ));
-        } else {
-          // FIX 5: Show error snackbar so user knows advancement failed
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: const Text(
-                '⚠️ Score saved but auto-advance failed. '
-                'Check that final/3rd-place match slots exist in the DB.'),
-            backgroundColor: Colors.orange.shade800,
-            behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            duration: const Duration(seconds: 5),
-          ));
+      if (isFinalMatch) {
+        // Final match: only show "Score submitted successfully!" — no advancement.
+        snackBar = SnackBar(
+          content: const Text('Score submitted successfully!'),
+          backgroundColor: const Color(0xFF5E975E),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 3),
+        );
+      } else {
+        final result = await _ChampApiService.advanceKnockout(
+          matchId:      m.matchId,
+          homeTeamId:   m.homeId,
+          awayTeamId:   m.awayId,
+          categoryId:   widget.categoryId,
+          isGroupMatch: isGroupMatch,
+        );
+
+        debugPrint('[_openScoring] advanceKnockout result=$result');
+
+        if (result != null) {
+          final status  = result['status']?.toString() ?? '';
+          final success = result['success'] == true;
+
+          if (status == 'pending') {
+            final grp    = result['group_label']?.toString() ?? '';
+            final scored = result['matches_scored']?.toString() ?? '?';
+            final total  = result['matches_total']?.toString()  ?? '?';
+            snackBar = SnackBar(
+              content: Text(
+                'Group $grp: $scored/$total matches scored. '
+                'Waiting for remaining matches.',
+              ),
+              backgroundColor: const Color(0xFF5C6BC0),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              duration: const Duration(seconds: 4),
+            );
+
+          } else if (status == 'group_complete') {
+            final grp       = result['group_label']?.toString() ?? '';
+            final nextRound = result['next_round']?.toString() ?? 'next round';
+            final r1        = result['rank1_team_name']?.toString() ?? '';
+            final r2        = result['rank2_team_name']?.toString() ?? '';
+            final uiRound   = _uiRoundFromBracketType(nextRound);
+            snackBar = SnackBar(
+              content: Text(
+                '✅ Group $grp complete! '
+                '$r1 & $r2 seeded into $uiRound.',
+              ),
+              backgroundColor: Colors.green.shade700,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              duration: const Duration(seconds: 5),
+            );
+
+          } else if (status == 'knockout_advanced') {
+            snackBar = SnackBar(
+              content: const Text('✅ Score submitted successfully!\n✅ Teams advanced to next round!'),
+              backgroundColor: Colors.green,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              duration: const Duration(seconds: 3),
+            );
+
+          } else if (success) {
+            // third-place — no further advancement needed
+            snackBar = SnackBar(
+              content: Text(result['message']?.toString() ?? '✅ Match scored.'),
+              backgroundColor: Colors.green,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              duration: const Duration(seconds: 3),
+            );
+
+          } else if (result['error'] == 'tie') {
+            snackBar = SnackBar(
+              content: const Text(
+                  '⚠️ Match ended in a tie — winner could not be determined.'),
+              backgroundColor: const Color(0xFFFF9F43),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              duration: const Duration(seconds: 4),
+            );
+
+          } else {
+            snackBar = SnackBar(
+              content: const Text('⚠️ Score saved, but advancement failed. '
+                  'Check server logs.'),
+              backgroundColor: const Color(0xFFE65100),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              duration: const Duration(seconds: 4),
+            );
+          }
         }
+      }
+
+      // Cleanup also runs on every load/refresh (above), but we call it
+      // here again immediately after a re-score so the QF/SF cards update
+      // in the same refresh cycle without waiting for the next open.
+      if (isAlreadyScored) {
+        await _ChampApiService.cleanupOrphanedSeeds(widget.categoryId);
+      }
+
+      // Refresh data first (may call setState internally)
+      await _refreshData();
+
+      // Show snackbar AFTER rebuild so it isn't cleared by setState.
+      // hideCurrentSnackBar() first so that if the user taps another match
+      // within 3 s the old "submitted" bar is dismissed immediately.
+      if (mounted && snackBar != null) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(snackBar);
+      }
+
+    } else {
+      // Not submitted — still refresh in case of other state changes
+      await _refreshData();
+    }
+
+    await Future.delayed(const Duration(milliseconds: 200));
+    if (!mounted) return;
+    _scrollSelectedTabIntoView(_tabController.index);
+  }
+
+  void _scrollSelectedTabIntoView(int index) {
+    if (index >= _tabKeys.length) return;
+
+    _tabController.animateTo(index, duration: Duration.zero);
+
+    void tryScroll() {
+      final ctx = _tabKeys[index].currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+          alignment: 0.5,
+        );
       }
     }
 
-    // Always refresh UI regardless of advance result
-    await _refreshData();
+    tryScroll();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) tryScroll();
+    });
   }
 
   // ── BUILD ──────────────────────────────────────────────────────────
@@ -823,24 +1090,26 @@ class _ChampionshipScheduleScreenState
       key: _bracketKey,
       child: Container(
         color: _accentColor,
-        child: AnimatedBuilder(
-          animation: _tabController,
-          builder: (context, _) => TabBar(
-            controller: _tabController,
-            labelColor: Colors.white,
-            unselectedLabelColor: Colors.white60,
-            indicatorColor: Colors.white,
-            indicatorWeight: 3,
-            dividerColor: Colors.transparent,
-            isScrollable: _rounds.length > 3,
-            labelStyle: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.8),
-            tabs: _rounds
-                .map((r) => Tab(icon: Icon(_roundIcon(r), size: 14), text: r))
-                .toList(),
-          ),
+        child: TabBar(
+          key: _tabBarKey,
+          controller: _tabController,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white60,
+          indicatorColor: Colors.white,
+          indicatorWeight: 3,
+          dividerColor: Colors.transparent,
+          isScrollable: _rounds.length > 3,
+          labelStyle: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.8),
+          tabs: _rounds.asMap().entries
+              .map((e) => Tab(
+                key: e.key < _tabKeys.length ? _tabKeys[e.key] : null,
+                icon: Icon(_roundIcon(e.value), size: 14),
+                text: e.value,
+              ))
+              .toList(),
         ),
       ),
     ),
@@ -898,11 +1167,11 @@ class _ChampionshipScheduleScreenState
                 const Icon(Icons.sports_soccer,
                     color: _headerMuted, size: 64),
                 const SizedBox(height: 16),
-                const Text('No championship matches found.',
+                const Text('No championship matches available yet.',
                     style: TextStyle(color: _headerMuted, fontSize: 15)),
                 const SizedBox(height: 8),
                 const Text(
-                    'The admin must create championship matches first.',
+                    'Qualification matches are not yet completed.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: _headerMuted, fontSize: 12)),
               ],
@@ -940,14 +1209,21 @@ class _ChampionshipScheduleScreenState
             ),
           );
         }
+        // Scored matches sink to the bottom; unscored stay on top.
+        final sortedMatches = [...matches]..sort((a, b) {
+            final aScored = _scoredMatchInfo.containsKey(a.matchId) ? 1 : 0;
+            final bScored = _scoredMatchInfo.containsKey(b.matchId) ? 1 : 0;
+            if (aScored != bScored) return aScored.compareTo(bScored);
+            return a.matchId.compareTo(b.matchId);
+          });
         return RefreshIndicator(
           onRefresh: _refreshData,
           color: _accentColor,
           child: ListView.builder(
             padding: const EdgeInsets.all(14),
-            itemCount: matches.length,
+            itemCount: sortedMatches.length,
             itemBuilder: (_, i) {
-              final m       = matches[i];
+              final m        = sortedMatches[i];
               final isScored = _scoredMatchInfo.containsKey(m.matchId);
               final matchScore = _matchScores[m.matchId];
               return _ChampMatchCard(
@@ -1037,6 +1313,7 @@ class _ChampMatchCard extends StatelessWidget {
         decoration: BoxDecoration(
           gradient: gradient,
           borderRadius: BorderRadius.circular(12),
+          border: null,
           boxShadow: [
             BoxShadow(
                 color: Colors.black.withOpacity(0.18),

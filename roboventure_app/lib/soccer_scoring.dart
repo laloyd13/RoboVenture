@@ -477,10 +477,6 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-    ]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
@@ -575,7 +571,8 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
               onTap: () => Navigator.pop(ctx),
               child: Container(
                 width: double.infinity, height: isSmall ? 38 : 44,
-                        decoration: BoxDecoration(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
                   color: Colors.orangeAccent,
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -600,7 +597,8 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
               },
               child: Container(
                 width: double.infinity, height: isSmall ? 38 : 44,
-                        decoration: BoxDecoration(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: Colors.white30),
@@ -708,7 +706,8 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
               onTap: () => Navigator.pop(ctx),
               child: Container(
                 width: double.infinity, height: isSmall ? 38 : 44,
-                        decoration: BoxDecoration(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
                   color: Colors.orangeAccent,
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -735,7 +734,8 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
               },
               child: Container(
                 width: double.infinity, height: isSmall ? 38 : 44,
-                        decoration: BoxDecoration(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: Colors.white30),
@@ -1063,10 +1063,15 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
       // Clear saved state — match is done, next open should start fresh
       await _MatchStatePersistence.clear(widget.matchId);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Score submitted!'), backgroundColor: _saveGreen));
       if (ctx.mounted) Navigator.pop(ctx); // close the MATCH SUMMARY dialog
-      Navigator.pop(context, true); // return true → championship marks as scored
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Score submitted successfully!'),
+          backgroundColor: Color(0xFF5E975E),
+          duration: Duration(seconds: 3),
+        ));
+      }
+      if (mounted) Navigator.pop(context, true); // return true → schedule screen shows snackbar
     } else {
       if (!mounted) return;
       setState(() => _isSubmitting = false);
@@ -1123,7 +1128,8 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
               onTap: () => Navigator.pop(ctx),
               child: Container(
                 width: double.infinity, height: 44,
-                        decoration: BoxDecoration(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
                     color: iconColor, borderRadius: BorderRadius.circular(12)),
                 child: const Text('OK',
                     style: TextStyle(color: Colors.white,
@@ -1192,7 +1198,8 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
               },
               child: Container(
                 width: double.infinity, height: 46,
-                        decoration: BoxDecoration(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
                     color: Colors.orangeAccent,
                     borderRadius: BorderRadius.circular(12)),
                 child: const Row(
@@ -1217,7 +1224,8 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
               },
               child: Container(
                 width: double.infinity, height: 46,
-                        decoration: BoxDecoration(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: Colors.white30),

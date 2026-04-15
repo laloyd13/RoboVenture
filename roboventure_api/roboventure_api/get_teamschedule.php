@@ -42,11 +42,15 @@ if ($bracket_type !== '') {
             ts.referee_id,
             ts.arena_number,
             m.bracket_type,
-            TIME_FORMAT(s.schedule_start, '%H:%i') AS match_time
+            TIME_FORMAT(s.schedule_start, '%H:%i') AS match_time,
+            sg.group_label
         FROM tbl_teamschedule ts
-        INNER JOIN tbl_team     t ON t.team_id     = ts.team_id
-        INNER JOIN tbl_match    m ON m.match_id    = ts.match_id
-        INNER JOIN tbl_schedule s ON s.schedule_id = m.schedule_id
+        INNER JOIN tbl_team     t  ON t.team_id      = ts.team_id
+        INNER JOIN tbl_match    m  ON m.match_id     = ts.match_id
+        INNER JOIN tbl_schedule s  ON s.schedule_id  = m.schedule_id
+        LEFT  JOIN tbl_soccer_groups sg
+                                   ON sg.team_id     = ts.team_id
+                                  AND sg.category_id = t.category_id
         WHERE t.category_id = ?
           AND m.bracket_type = ?
         ORDER BY s.schedule_start ASC, ts.match_id ASC, ts.teamschedule_id ASC";
@@ -68,11 +72,15 @@ if ($bracket_type !== '') {
             ts.referee_id,
             ts.arena_number,
             m.bracket_type,
-            TIME_FORMAT(s.schedule_start, '%H:%i') AS match_time
+            TIME_FORMAT(s.schedule_start, '%H:%i') AS match_time,
+            sg.group_label
         FROM tbl_teamschedule ts
-        INNER JOIN tbl_team     t ON t.team_id     = ts.team_id
-        INNER JOIN tbl_match    m ON m.match_id    = ts.match_id
-        INNER JOIN tbl_schedule s ON s.schedule_id = m.schedule_id
+        INNER JOIN tbl_team     t  ON t.team_id      = ts.team_id
+        INNER JOIN tbl_match    m  ON m.match_id     = ts.match_id
+        INNER JOIN tbl_schedule s  ON s.schedule_id  = m.schedule_id
+        LEFT  JOIN tbl_soccer_groups sg
+                                   ON sg.team_id     = ts.team_id
+                                  AND sg.category_id = t.category_id
         WHERE t.category_id = ?
         ORDER BY s.schedule_start ASC, ts.match_id ASC, ts.teamschedule_id ASC";
 
@@ -105,6 +113,7 @@ while ($row = $result->fetch_assoc()) {
         'arena_number'    => (int)$row['arena_number'],
         'bracket_type'    => $row['bracket_type'],
         'match_time'      => $row['match_time'] ?? '',
+        'group_label'     => $row['group_label'] ?? '',
     ];
 }
 

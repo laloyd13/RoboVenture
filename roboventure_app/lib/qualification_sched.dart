@@ -1,6 +1,7 @@
 // ignore_for_file: unused_element_parameter, deprecated_member_use
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
@@ -33,6 +34,32 @@ class ArenaInfo {
       );
 }
 
+class GroupStanding {
+  final String groupLabel;
+  final int    teamId;
+  final String teamName;
+  final int    mp, w, d, l, gf, ga, gd, pts;
+
+  const GroupStanding({
+    required this.groupLabel,
+    required this.teamId,
+    required this.teamName,
+    required this.mp, required this.w, required this.d, required this.l,
+    required this.gf, required this.ga, required this.gd, required this.pts,
+  });
+
+  factory GroupStanding.fromJson(Map<String, dynamic> j) {
+    int toInt(dynamic v) => int.tryParse((v ?? '0').toString()) ?? 0;
+    return GroupStanding(
+      groupLabel: j['group_label']?.toString() ?? '',
+      teamId:     toInt(j['team_id']),
+      teamName:   j['team_name']?.toString() ?? '',
+      mp: toInt(j['mp']), w: toInt(j['w']), d: toInt(j['d']), l: toInt(j['l']),
+      gf: toInt(j['gf']), ga: toInt(j['ga']), gd: toInt(j['gd']), pts: toInt(j['pts']),
+    );
+  }
+}
+
 class ScheduleEntry {
   final int    teamscheduleId;
   final int    matchId;
@@ -46,6 +73,8 @@ class ScheduleEntry {
   final String homeTeamName;
   final String awayTeamName;
   final String bracketType;  // e.g. 'group', 'quarter-finals', 'final', etc.
+  final String groupLabel;   // e.g. 'A', 'B', 'C' — from tbl_soccer_groups
+  final String matchTime;    // e.g. '09:30' — from tbl_schedule
 
   const ScheduleEntry({
     required this.teamscheduleId,
@@ -60,6 +89,8 @@ class ScheduleEntry {
     this.homeTeamName = '',
     this.awayTeamName = '',
     this.bracketType  = '',
+    this.groupLabel   = '',
+    this.matchTime    = '',
   });
 
   factory ScheduleEntry.fromJson(Map<String, dynamic> json) {
@@ -80,6 +111,8 @@ class ScheduleEntry {
       refereeId:      safeInt(json['referee_id']),
       arenaNumber:    safeInt(json['arena_number']),
       bracketType:    (json['bracket_type'] ?? '').toString(),
+      groupLabel:     (json['group_label'] ?? '').toString(),
+      matchTime:      (json['match_time'] ?? '').toString(),
     );
   }
 }
@@ -94,6 +127,8 @@ class _SoccerMatchRow {
   final int    awayId;
   final int    arena;
   final bool   isScored;
+  final String groupLabel;  // e.g. 'A', 'B' — from tbl_soccer_groups via home team
+  final String matchTime;   // e.g. '09:30' — competition time from tbl_schedule
   // Winner info — only meaningful when isScored == true
   // 'home' | 'away' | 'draw' | '' (not scored yet)
   final String winner;
@@ -108,10 +143,12 @@ class _SoccerMatchRow {
     required this.away,
     required this.awayId,
     required this.arena,
-    this.isScored  = false,
-    this.winner    = '',
-    this.homeScore = 0,
-    this.awayScore = 0,
+    this.isScored   = false,
+    this.groupLabel = '',
+    this.matchTime  = '',
+    this.winner     = '',
+    this.homeScore  = 0,
+    this.awayScore  = 0,
   });
 }
 
@@ -225,6 +262,44 @@ class _ScheduleApiService {
     return {};
   }
 
+  /// Calls cleanup_champ_seeds.php (POST) to remove any championship seeds
+  /// whose feeder qualification score no longer exists in the DB.
+  /// Safe to call on every refresh — no-ops if nothing is orphaned.
+  static Future<void> cleanupOrphanedSeeds(int categoryId) async {
+    try {
+      await http.post(
+        Uri.parse(ApiConfig.cleanupChampionshipSeeds),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'category_id': categoryId}),
+      ).timeout(const Duration(seconds: 10));
+      debugPrint('[qual] cleanupOrphanedSeeds done for category=$categoryId');
+    } catch (e) {
+      debugPrint('[qual] cleanupOrphanedSeeds error: $e');
+    }
+  }
+
+  static Future<Map<String, List<GroupStanding>>> fetchGroupStandings(
+      int categoryId) async {
+    try {
+      final url = Uri.parse(
+          '${ApiConfig.getGroupStandings}?category_id=$categoryId');
+      final response =
+          await http.get(url).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        final Map<String, List<GroupStanding>> byGroup = {};
+        for (final j in data) {
+          final s = GroupStanding.fromJson(j as Map<String, dynamic>);
+          byGroup.putIfAbsent(s.groupLabel, () => []).add(s);
+        }
+        return byGroup;
+      }
+    } catch (e) {
+      debugPrint('[qual] fetchGroupStandings error: $e');
+    }
+    return {};
+  }
+
   /// Returns a map of "matchId_teamId" → score (int).
   ///
   /// Soccer    → bracket_type = 'group' only.
@@ -291,10 +366,18 @@ class _QualificationScheduleScreenState
   bool            _arenasLoading = true;
   String?         _arenasError;
   TabController?  _tabController;
+  // One GlobalKey per arena tab so we can call Scrollable.ensureVisible
+  // on the selected tab after returning from the scoring page.
+  List<GlobalKey> _tabKeys = [];
 
   final Map<int, Future<List<ScheduleEntry>>> _scheduleFutures = {};
-  Set<String>    _scoredMatchIds = {};
-  Map<String, int> _scoreMap    = {};
+  Set<String>      _scoredMatchIds = {};
+  Map<String, int> _scoreMap       = {};
+
+  // ── Group standings (soccer only) ─────────────────────────────────
+  Map<String, List<GroupStanding>> _standings     = {};
+  bool                              _standingsExpanded = false;
+  Timer?                            _standingsTimer;
 
   bool get _soccer => _isSoccer(widget.competitionTitle);
 
@@ -303,15 +386,35 @@ class _QualificationScheduleScreenState
     super.initState();
     _loadArenas();
     _refreshScoredIds();
+    // Always fetch standings — panel only renders when _soccer is true,
+    // but fetching unconditionally avoids missing data if the title check
+    // doesn't match exactly.
+    _refreshStandings();
+    _standingsTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _refreshStandings(),
+    );
   }
 
   @override
   void dispose() {
+    _standingsTimer?.cancel();
     _tabController?.dispose();
     super.dispose();
   }
 
+  Future<void> _refreshStandings() async {
+    final data = await _ScheduleApiService.fetchGroupStandings(
+        widget.categoryId);
+    if (mounted) setState(() => _standings = data);
+  }
+
   Future<void> _refreshScoredIds() async {
+    // Clean up any championship seeds whose qualification score was deleted
+    // directly in the DB — runs on every load/refresh so stale seeds are
+    // swept out automatically without needing an in-app delete action.
+    await _ScheduleApiService.cleanupOrphanedSeeds(widget.categoryId);
+
     final results = await Future.wait([
       _ScheduleApiService.fetchScoredMatchIds(widget.categoryId, isSoccer: _soccer),
       _ScheduleApiService.fetchScoreMap(widget.categoryId, isSoccer: _soccer),
@@ -333,6 +436,7 @@ class _QualificationScheduleScreenState
       setState(() {
         _arenas        = arenas;
         _tabController = tc;
+        _tabKeys       = List.generate(arenas.length, (_) => GlobalKey());
         _arenasLoading = false;
       });
       // Dispose old controller AFTER the frame rebuilds with the new one
@@ -368,7 +472,17 @@ class _QualificationScheduleScreenState
   }
 
   Future<void> _openScoringPage(BuildContext context, ScheduleEntry entry) async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) {
+    // Save the current tab index so we can restore the tab bar scroll position
+    // after returning from the scoring page (setState on refresh would reset it).
+    final savedTabIndex = _tabController?.index ?? 0;
+
+    // Capture messenger before any async gap (satisfies use_build_context_synchronously).
+    // Dismiss any visible snackbar immediately so it doesn't linger while the
+    // scoring page is open.
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+
+    final bool? submitted = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) {
       if (widget.competitionTitle.toLowerCase().contains('emerging innovators')) {
         return Mbot2ScoringPage(
             matchId: entry.matchId, teamId: entry.teamId,
@@ -393,7 +507,125 @@ class _QualificationScheduleScreenState
           matchId: entry.matchId, teamId: entry.teamId,
           refereeId: entry.refereeId);
     }));
-    _refreshScoredIds();
+
+    // The soccer scoring page is landscape. Its dispose() no longer resets
+    // orientation — we do it here, synchronously, before any setState fires,
+    // so the schedule screen is already portrait before Flutter rebuilds it.
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+
+    if (!mounted) return;
+
+    // ── Soccer group match: seed winner into first knockout round ─────────
+    // Only runs when SoccerScoringPage returned true (score submitted OK).
+    // Uses scoring.php?action=get_match_scores (same endpoint the scoring
+    // page itself uses) to read back goals and determine winner/loser.
+    debugPrint('[qual] submitted=$submitted soccer=$_soccer awayId=${entry.awayTeamId}');
+    if (_soccer && submitted == true && entry.awayTeamId != 0) {
+      try {
+        // Use the same endpoint the scoring page uses internally
+        final scoreRows = await SoccerScoringApiService.fetchMatchScores(entry.matchId);
+        debugPrint('[qual] scoreRows count=${scoreRows.length} rows=$scoreRows');
+
+        if (scoreRows.length >= 2) {
+          final Map<int, int> teamGoals = {};
+          for (final j in scoreRows) {
+            final tid   = int.tryParse(j['team_id'].toString()) ?? 0;
+            // score_independentscore = goals for this team
+            final goals = int.tryParse(j['score_independentscore'].toString()) ?? 0;
+            if (tid > 0) teamGoals[tid] = goals;
+            debugPrint('[qual] team=$tid goals=$goals');
+          }
+          final homeGoals = teamGoals[entry.teamId]     ?? 0;
+          final awayGoals = teamGoals[entry.awayTeamId] ?? 0;
+          debugPrint('[qual] home=${entry.teamId} goals=$homeGoals  away=${entry.awayTeamId} goals=$awayGoals');
+
+          if (homeGoals != awayGoals) {
+            final winnerTeamId = homeGoals > awayGoals ? entry.teamId     : entry.awayTeamId;
+            final loserTeamId  = homeGoals > awayGoals ? entry.awayTeamId : entry.teamId;
+
+            // Remove previously seeded teams from knockout slots before
+            // re-seeding, so the new winner replaces the old one cleanly.
+            try {
+              final cleanupUrl = Uri.parse(ApiConfig.cleanupChampionshipSeeds);
+              await http.delete(
+                cleanupUrl,
+                headers: {'Content-Type': 'application/json'},
+                body: json.encode({
+                  'team_ids':    [entry.teamId, entry.awayTeamId],
+                  'category_id': widget.categoryId,
+                }),
+              ).timeout(const Duration(seconds: 10));
+              debugPrint('[qual] cleanup seeds for teams=${entry.teamId},${entry.awayTeamId} done');
+            } catch (e) {
+              debugPrint('[qual] cleanup seeds error: $e');
+            }
+
+            final advanceUrl   = Uri.parse(ApiConfig.advanceKnockout);
+            final advResp = await http.post(
+              advanceUrl,
+              headers: {'Content-Type': 'application/json'},
+              body: json.encode({
+                'match_id':       entry.matchId,
+                'winner_team_id': winnerTeamId,
+                'loser_team_id':  loserTeamId,
+                'category_id':    widget.categoryId,
+              }),
+            ).timeout(const Duration(seconds: 10));
+            debugPrint('[qual] advanceKnockout [${advResp.statusCode}]: ${advResp.body}');
+          } else {
+            debugPrint('[qual] TIE in group match=${entry.matchId} — no advance');
+          }
+        } else {
+          debugPrint('[qual] not enough score rows (${scoreRows.length}) for match=${entry.matchId}');
+        }
+      } catch (e, st) {
+        debugPrint('[qual] advanceKnockout error: $e\n$st');
+      }
+    }
+
+    // Refresh scored IDs into state for UI update.
+    await _refreshScoredIds();
+    if (_soccer) await _refreshStandings();
+
+    // Wait for the orientation change + layout to fully settle before
+    // trying to scroll the tab into view. One frame is not enough after
+    // a landscape→portrait transition, so we use a short delay then
+    // scroll inside a post-frame callback so the RenderObjects are ready.
+    await Future.delayed(const Duration(milliseconds: 200));
+    if (!mounted) return;
+    _scrollSelectedTabIntoView(savedTabIndex);
+  }
+
+  void _scrollSelectedTabIntoView(int index) {
+    if (_tabController == null) return;
+    if (index >= _tabController!.length) return;
+    if (index >= _tabKeys.length) return;
+
+    // Snap the controller to the correct index first.
+    _tabController!.animateTo(index, duration: Duration.zero);
+
+    // Then ask Flutter to scroll the tab widget into view.
+    // We try immediately, and schedule a second attempt one frame later
+    // in case the first fires before the TabBar has finished laying out.
+    void tryScroll() {
+      final ctx = _tabKeys[index].currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+          alignment: 0.5,
+        );
+      }
+    }
+
+    tryScroll();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) tryScroll();
+    });
   }
 
   @override
@@ -403,6 +635,7 @@ class _QualificationScheduleScreenState
       body: SafeArea(child: Column(children: [
         _buildHeader(),
         _buildTitleBar(),
+        if (_soccer) _buildStandingsPanel(),
         Expanded(child: _buildBody()),
       ])),
     );
@@ -516,32 +749,103 @@ class _QualificationScheduleScreenState
       Container(color: _accentColor, child: _buildTabBar()),
   ]);
 
-  Widget _buildTabBar() => AnimatedBuilder(
-    animation: _tabController!,
-    builder: (context, _) => TabBar(
-      controller: _tabController,
-      isScrollable: _arenas.length > 3,
-      labelColor: Colors.white,
-      unselectedLabelColor: Colors.white60,
-      indicatorColor: Colors.white,
-      indicatorWeight: 3,
-      dividerColor: Colors.transparent,
-      labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-      unselectedLabelStyle: const TextStyle(fontSize: 12),
-      tabs: _arenas.asMap().entries.map((entry) {
-        final isSelected = _tabController!.index == entry.key;
-        return Tab(child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.stadium_outlined, size: 15,
-                color: isSelected ? Colors.white : Colors.white60),
-            const SizedBox(width: 5),
-            Text(entry.value.arenaName.toUpperCase()),
-          ]),
-        ));
-      }).toList(),
-    ),
+  Widget _buildTabBar() => TabBar(
+    controller: _tabController,
+    isScrollable: _arenas.length > 3,
+    labelColor: Colors.white,
+    unselectedLabelColor: Colors.white60,
+    indicatorColor: Colors.white,
+    indicatorWeight: 3,
+    dividerColor: Colors.transparent,
+    labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+    unselectedLabelStyle: const TextStyle(fontSize: 12),
+    tabs: _arenas.asMap().entries.map((entry) {
+      return Tab(child: Padding(
+        key: entry.key < _tabKeys.length ? _tabKeys[entry.key] : null,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          // No explicit color — inherits labelColor/unselectedLabelColor
+          // from TabBar so icon and text always match.
+          const Icon(Icons.stadium_outlined, size: 15),
+          const SizedBox(width: 5),
+          Text(entry.value.arenaName.toUpperCase()),
+        ]),
+      ));
+    }).toList(),
   );
+
+  // ── GROUP STANDINGS PANEL ────────────────────────────────────────────
+  Widget _buildStandingsPanel() {
+    final bool hasData = _standings.isNotEmpty;
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF5A3A9A), Color(0xFF7D58B3)],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+        border: Border(
+          bottom: BorderSide(color: Color(0xFFD4A017), width: 2),
+        ),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        // ── Collapse toggle ──────────────────────────────────────────
+        InkWell(
+          onTap: () => setState(
+              () => _standingsExpanded = !_standingsExpanded),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            child: Row(children: [
+              const Icon(Icons.leaderboard_rounded,
+                  color: Color(0xFFD4A017), size: 13),
+              const SizedBox(width: 6),
+              const Text('GROUP STANDINGS',
+                  style: TextStyle(
+                      color: Color(0xFFD4A017),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.1)),
+              const Spacer(),
+              if (!hasData && _standingsExpanded)
+                Text('loading...',
+                    style: TextStyle(
+                        color: Colors.white.withOpacity(0.35),
+                        fontSize: 9)),
+              const SizedBox(width: 6),
+              Icon(
+                _standingsExpanded
+                    ? Icons.keyboard_arrow_up_rounded
+                    : Icons.keyboard_arrow_down_rounded,
+                color: Colors.white54,
+                size: 16,
+              ),
+            ]),
+          ),
+        ),
+        // ── Table (shown when expanded and data available) ───────────
+        if (_standingsExpanded && hasData)
+          SizedBox(
+            // header(28) + col-labels(28) + divider(1) + rows(34 each) + bottom-pad(10)
+            height: ((){
+              final maxRows = _standings.values
+                  .map((r) => r.length)
+                  .fold(0, (a, b) => a > b ? a : b);
+              return 28.0 + 28.0 + 1.0 + maxRows * 34.0 + 10.0;
+            })(),
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              itemCount: _standings.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (_, i) {
+                final entry = _standings.entries.elementAt(i);
+                return _GroupTable(label: entry.key, rows: entry.value);
+              },
+            ),
+          ),
+      ]),
+    );
+  }
 
   Widget _buildBody() {
     if (_arenasLoading) {
@@ -658,6 +962,8 @@ class _ArenaScheduleView extends StatelessWidget {
           away:          '',
           awayId:        0,
           arena:         e.arenaNumber,
+          groupLabel:    e.groupLabel,
+          matchTime:     e.matchTime,
         );
       } else {
         final existing = byMatch[e.matchId]!;
@@ -669,6 +975,8 @@ class _ArenaScheduleView extends StatelessWidget {
           away:          e.teamName,
           awayId:        e.teamId,
           arena:         existing.arena,
+          groupLabel:    existing.groupLabel,
+          matchTime:     existing.matchTime,
         );
       }
     }
@@ -698,6 +1006,8 @@ class _ArenaScheduleView extends StatelessWidget {
         away:          row.away,
         awayId:        row.awayId,
         arena:         row.arena,
+        groupLabel:    row.groupLabel,
+        matchTime:     row.matchTime,
         isScored:      bothScored,
         winner:        '', // unused — W/L derived from scores directly in UI
         homeScore:     hScore,
@@ -834,6 +1144,151 @@ class _ArenaScheduleView extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
+// GROUP STANDINGS TABLE WIDGET
+// ─────────────────────────────────────────────
+class _GroupTable extends StatelessWidget {
+  final String              label;
+  final List<GroupStanding> rows;
+
+  const _GroupTable({required this.label, required this.rows});
+
+  static const _hdrStyle = TextStyle(
+    color: Colors.white54, fontSize: 8.5,
+    fontWeight: FontWeight.w800, letterSpacing: 0.8,
+  );
+  static const _cellStyle = TextStyle(
+    color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600,
+  );
+  static const _namStyle = TextStyle(
+    color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    // width = 120 (name) + 24*4 (MP/W/D/L) + 28*4 (GF/GA/GD/PTS)
+    //       + 20 (horizontal padding 10*2) + 2 (border 1*2) + 8 (extra buffer)
+    const double tableWidth = 120 + 24 * 4 + 28 * 4 + 30;
+    return SizedBox(
+      width: tableWidth,
+      child: Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withOpacity(0.20)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        // Group label header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: _accentColor.withOpacity(0.5),
+            borderRadius:
+                const BorderRadius.vertical(top: Radius.circular(8)),
+          ),
+          child: Text('GROUP $label',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: Color(0xFFD4A017),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.0)),
+        ),
+        // Column headers
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          child: Row(children: [
+            const SizedBox(width: 120, child: Text('TEAM', style: _hdrStyle)),
+            const SizedBox(width: 24, child: Text('MP', style: _hdrStyle, textAlign: TextAlign.center)),
+            const SizedBox(width: 24, child: Text('W',  style: _hdrStyle, textAlign: TextAlign.center)),
+            const SizedBox(width: 24, child: Text('D',  style: _hdrStyle, textAlign: TextAlign.center)),
+            const SizedBox(width: 24, child: Text('L',  style: _hdrStyle, textAlign: TextAlign.center)),
+            const SizedBox(width: 28, child: Text('GF', style: _hdrStyle, textAlign: TextAlign.center)),
+            const SizedBox(width: 28, child: Text('GA', style: _hdrStyle, textAlign: TextAlign.center)),
+            const SizedBox(width: 28, child: Text('GD', style: _hdrStyle, textAlign: TextAlign.center)),
+            const SizedBox(width: 28, child: Text('PTS', style: _hdrStyle, textAlign: TextAlign.center)),
+          ]),
+        ),
+        const Divider(height: 1, color: Colors.white12),
+        // Data rows
+        ...rows.asMap().entries.map((e) {
+          final i   = e.key;
+          final row = e.value;
+          final isTop2   = i < 2;
+          final gdStr    = row.gd > 0 ? '+${row.gd}' : '${row.gd}';
+          return Container(
+            decoration: BoxDecoration(
+              color: isTop2
+                  ? Colors.greenAccent.withOpacity(0.06)
+                  : Colors.transparent,
+              border: i < rows.length - 1
+                  ? const Border(
+                      bottom: BorderSide(color: Colors.white10))
+                  : null,
+              borderRadius: i == rows.length - 1
+                  ? const BorderRadius.vertical(
+                      bottom: Radius.circular(8))
+                  : null,
+            ),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Row(children: [
+              // Rank dot + name
+              SizedBox(
+                width: 120,
+                child: Row(children: [
+                  Container(
+                    width: 16, height: 16,
+                    margin: const EdgeInsets.only(right: 6),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isTop2
+                          ? Colors.greenAccent.withOpacity(0.25)
+                          : Colors.white.withOpacity(0.08),
+                    ),
+                    child: Center(
+                      child: Text('${i + 1}',
+                          style: TextStyle(
+                              color: isTop2
+                                  ? Colors.greenAccent
+                                  : Colors.white54,
+                              fontSize: 8,
+                              fontWeight: FontWeight.w900)),
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(row.teamName,
+                        overflow: TextOverflow.ellipsis,
+                        style: _namStyle),
+                  ),
+                ]),
+              ),
+              SizedBox(width: 24, child: Text('${row.mp}', style: _cellStyle, textAlign: TextAlign.center)),
+              SizedBox(width: 24, child: Text('${row.w}',  style: _cellStyle, textAlign: TextAlign.center)),
+              SizedBox(width: 24, child: Text('${row.d}',  style: _cellStyle, textAlign: TextAlign.center)),
+              SizedBox(width: 24, child: Text('${row.l}',  style: _cellStyle, textAlign: TextAlign.center)),
+              SizedBox(width: 28, child: Text('${row.gf}', style: _cellStyle, textAlign: TextAlign.center)),
+              SizedBox(width: 28, child: Text('${row.ga}', style: _cellStyle, textAlign: TextAlign.center)),
+              SizedBox(width: 28, child: Text(gdStr,        style: _cellStyle, textAlign: TextAlign.center)),
+              SizedBox(width: 28,
+                child: Text('${row.pts}',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: isTop2
+                            ? Colors.greenAccent
+                            : Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900)),
+              ),
+            ]),
+          );
+        }),
+      ]),
+      ), // Container
+    ); // SizedBox
+  }
+}
+
+// ─────────────────────────────────────────────
 // SOCCER MATCH TABLE  (MATCH | HOME | VS | AWAY)
 // ─────────────────────────────────────────────
 class _SoccerMatchTable extends StatelessWidget {
@@ -930,27 +1385,23 @@ class _SoccerMatchTable extends StatelessWidget {
             child: Row(children: [
               // Wider column so label aligns with the wider match-number area
               const SizedBox(width: 84, child: Text('MATCH', style: _lblStyle)),
-              const Expanded(child: Text('TEAM 1', style: _lblStyle)),
+              Expanded(
+                child: Text(
+                  m.groupLabel.isNotEmpty ? 'TEAM 1  •  GRP ${m.groupLabel}' : 'TEAM 1',
+                  style: _lblStyle,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
               const SizedBox(width: 40,
                   child: Center(child: Text('VS', style: _lblStyle))),
-              const Expanded(child: Text('TEAM 2', style: _lblStyle,
-                  textAlign: TextAlign.right)),
-              if (m.isScored)
-                Container(
-                  margin: const EdgeInsets.only(left: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.greenAccent.withOpacity(0.30),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                        color: Colors.greenAccent.withOpacity(0.6)),
-                  ),
-                  child: const Text('SCORED',
-                      style: TextStyle(
-                          color: Colors.greenAccent,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold)),
+              Expanded(
+                child: Text(
+                  m.groupLabel.isNotEmpty ? 'TEAM 2  •  GRP ${m.groupLabel}' : 'TEAM 2',
+                  style: _lblStyle,
+                  textAlign: TextAlign.right,
+                  overflow: TextOverflow.ellipsis,
                 ),
+              ),
             ]),
           ),
           // Values row
@@ -1035,29 +1486,48 @@ class _SoccerMatchTable extends StatelessWidget {
                   bottom: Radius.circular(8)),
             ),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                if (!m.isScored) ...[
-                  Text('TAP TO SCORE',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.55),
-                        fontSize: 9, fontWeight: FontWeight.w700,
-                        letterSpacing: 0.8,
-                      )),
-                  const SizedBox(width: 3),
-                  Icon(Icons.chevron_right_rounded,
-                      color: Colors.white.withOpacity(0.55), size: 14),
-                ] else ...[
-                  Icon(Icons.check_circle_outline_rounded,
-                      color: Colors.greenAccent.withOpacity(0.7), size: 12),
-                  const SizedBox(width: 4),
-                  Text('COMPLETED',
-                      style: TextStyle(
-                        color: Colors.greenAccent.withOpacity(0.7),
-                        fontSize: 9, fontWeight: FontWeight.w700,
-                        letterSpacing: 0.8,
-                      )),
-                ],
+                // ── Competition time — left side ──────────────────────
+                if (m.matchTime.isNotEmpty)
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.access_time_rounded,
+                        color: Colors.white.withOpacity(0.55), size: 11),
+                    const SizedBox(width: 4),
+                    Text(m.matchTime,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.55),
+                          fontSize: 9, fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                        )),
+                  ])
+                else
+                  const SizedBox.shrink(),
+                // ── Status — right side ───────────────────────────────
+                if (!m.isScored)
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    Text('TAP TO SCORE',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.55),
+                          fontSize: 9, fontWeight: FontWeight.w700,
+                          letterSpacing: 0.8,
+                        )),
+                    const SizedBox(width: 3),
+                    Icon(Icons.chevron_right_rounded,
+                        color: Colors.white.withOpacity(0.55), size: 14),
+                  ])
+                else
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.check_circle_outline_rounded,
+                        color: Colors.greenAccent.withOpacity(0.7), size: 12),
+                    const SizedBox(width: 4),
+                    Text('COMPLETED',
+                        style: TextStyle(
+                          color: Colors.greenAccent.withOpacity(0.7),
+                          fontSize: 9, fontWeight: FontWeight.w700,
+                          letterSpacing: 0.8,
+                        )),
+                  ]),
               ],
             ),
           ),

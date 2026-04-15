@@ -158,7 +158,7 @@ class _LoadingScreenState extends State<LoadingScreen>
         // ── Rotating geometric background ──────────────────────────
         AnimatedBuilder(
           animation: _bgCtrl,
-          builder: (_, __) => CustomPaint(
+          builder: (_, _) => CustomPaint(
             painter: _GeoBgPainter(_bgCtrl.value),
             size: MediaQuery.of(context).size,
           ),
@@ -167,7 +167,7 @@ class _LoadingScreenState extends State<LoadingScreen>
         // ── Radial glow behind logo ────────────────────────────────
         AnimatedBuilder(
           animation: _glowPulse,
-          builder: (_, __) => Center(
+          builder: (_, _) => Center(
             child: Container(
               width: 380, height: 380,
               decoration: BoxDecoration(
@@ -275,7 +275,7 @@ class _LoadingScreenState extends State<LoadingScreen>
                   child: Column(children: [
                     AnimatedBuilder(
                       animation: _barCtrl,
-                      builder: (_, __) => ClipRRect(
+                      builder: (_, _) => ClipRRect(
                         borderRadius: BorderRadius.circular(100),
                         child: LinearProgressIndicator(
                           value: _barCtrl.value,
@@ -290,7 +290,7 @@ class _LoadingScreenState extends State<LoadingScreen>
                     const SizedBox(height: 10),
                     AnimatedBuilder(
                       animation: _barCtrl,
-                      builder: (_, __) => Text(
+                      builder: (_, _) => Text(
                         _networkError
                             ? 'CONNECTION FAILED'
                             : 'LOADING ${(_barCtrl.value * 100).toInt()}%',
@@ -478,7 +478,7 @@ class _PulseDotsState extends State<_PulseDots>
 
   @override
   void dispose() {
-    for (final c in _ctrls) c.dispose();
+    for (final c in _ctrls) { c.dispose(); }
     super.dispose();
   }
 
@@ -487,7 +487,7 @@ class _PulseDotsState extends State<_PulseDots>
     mainAxisAlignment: MainAxisAlignment.center,
     children: List.generate(5, (i) => AnimatedBuilder(
       animation: _anims[i],
-      builder: (_, __) => Container(
+      builder: (_, _) => Container(
         margin: const EdgeInsets.symmetric(horizontal: 3),
         width: 5, height: 5,
         decoration: BoxDecoration(
@@ -551,7 +551,7 @@ class _GeoBgPainter extends CustomPainter {
       for (int i = 0; i < 6; i++) {
         final x = cx + radii[r] * math.cos(a + i * math.pi / 3);
         final y = cy + radii[r] * math.sin(a + i * math.pi / 3);
-        if (i == 0) path.moveTo(x, y); else path.lineTo(x, y);
+        if (i == 0) { path.moveTo(x, y); } else { path.lineTo(x, y); }
       }
       path.close();
       canvas.drawPath(path, paint);
@@ -589,7 +589,7 @@ class _GeoBgPainter extends CustomPainter {
       for (int i = 0; i < 3; i++) {
         final x = to.dx + triSize * math.cos(ta + i * 2 * math.pi / 3);
         final y = to.dy + triSize * math.sin(ta + i * 2 * math.pi / 3);
-        if (i == 0) triPath.moveTo(x, y); else triPath.lineTo(x, y);
+        if (i == 0) { triPath.moveTo(x, y); } else { triPath.lineTo(x, y); }
       }
       triPath.close();
       canvas.drawPath(triPath, triPaint);

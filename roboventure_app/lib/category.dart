@@ -34,7 +34,6 @@ class MainMenuScreen extends StatelessWidget {
           Positioned.fill(
               child: CustomPaint(painter: GeometricBackgroundPainter())),
 
-          // Subtle radial glow behind the title area
           Positioned(
             top: -60,
             left: -60,
@@ -144,7 +143,6 @@ class MainMenuScreen extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: Column(
                     children: [
-                      // Overline label
                       Container(
                         margin: const EdgeInsets.only(bottom: 12),
                         padding: const EdgeInsets.symmetric(
@@ -169,7 +167,6 @@ class MainMenuScreen extends StatelessWidget {
                       if (secondLine.isNotEmpty)
                         _buildGradientText(secondLine, 56),
 
-                      // Decorative divider under title
                       Padding(
                         padding: const EdgeInsets.only(top: 16),
                         child: Row(

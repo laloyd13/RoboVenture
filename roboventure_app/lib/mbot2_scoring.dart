@@ -897,6 +897,9 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
     // ── Duplicate-submission guard ────────────────────────────────────
     if (_isSubmitting) return;
 
+    // Capture navigator before any async gap so context is guaranteed valid.
+    final rootNav = Navigator.of(context, rootNavigator: true);
+
     // ── Validate signatures ───────────────────────────────────────────
     final captainSigned = _captainDelegate.points.any((p) => p != null);
     final refereeSigned = _refereeDelegate.points.any((p) => p != null);
@@ -1003,10 +1006,11 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
       if (confirmed != true) return;
     }
 
+    if (!mounted) return;
     setState(() => _isSubmitting = true);
-    final rootNav = Navigator.of(context, rootNavigator: true);
 
     // Show loading indicator
+    if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1053,12 +1057,7 @@ class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
       // Clear saved state — match is done, next open should start fresh
       await _Mbot2StatePersistence.clear(widget.matchId);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Score submitted successfully!'),
-        backgroundColor: saveGreen,
-      ));
-      rootNav.pop();
-      rootNav.pop();
+      rootNav.pop(true); // return true → qualification screen shows snackbar
     } else {
       setState(() => _isSubmitting = false);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
