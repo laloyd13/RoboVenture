@@ -564,6 +564,7 @@ class _ChampionshipScheduleScreenState
   Key _bracketKey = const ValueKey('default');
 
   bool    _loading = true;
+  bool    _isRefreshing = false;
   String? _error;
 
   Map<String, List<_ChampMatch>> _matchesByRound = {};
@@ -675,6 +676,15 @@ class _ChampionshipScheduleScreenState
         _matchScores     = matchScores;
       });
     } catch (_) {}
+  }
+
+  // ── RETRY (re-scan network, then reload) ──────────────────────────
+  Future<void> _handleRetry() async {
+    setState(() => _isRefreshing = true);
+    await ApiConfig.refresh();
+    if (!mounted) return;
+    setState(() => _isRefreshing = false);
+    await _loadBracket();
   }
 
   // ── OPEN SCORING ───────────────────────────────────────────────────
@@ -1128,17 +1138,26 @@ class _ChampionshipScheduleScreenState
             child: Center(child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.error_outline,
+                const Icon(Icons.wifi_off_rounded,
                     color: Colors.redAccent, size: 48),
                 const SizedBox(height: 12),
-                Text(_error!,
+                const Text('Connection Lost',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.redAccent)),
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.redAccent)),
+                const SizedBox(height: 6),
+                const Text('Make sure both devices are on the same network.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
                 const SizedBox(height: 16),
                 ElevatedButton.icon(
-                  onPressed: _loadBracket,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('RETRY'),
+                  onPressed: _isRefreshing ? null : _handleRetry,
+                  icon: _isRefreshing
+                      ? const SizedBox(
+                          width: 16, height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.refresh),
+                  label: Text(_isRefreshing ? 'Retrying...' : 'RETRY'),
                   style:
                       ElevatedButton.styleFrom(backgroundColor: _accentColor),
                 ),

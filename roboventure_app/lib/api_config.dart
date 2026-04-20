@@ -130,7 +130,7 @@ class ApiConfig {
   static String get getScoredMatches => '$_baseUrl/get_scored_matches.php';
 
   /// scoring.dart  →  ScoringApiService (all actions)
-  static String get scoring => '$_baseUrl/scoring.php';
+  static String get scoring => '$_baseUrl/score_submit.php';
 
   /// championship_sched.dart  →  _ChampApiService.fetchScoredMatchIds()
   static String get getScoredChampionshipMatches =>
@@ -138,7 +138,7 @@ class ApiConfig {
 
   /// championship_sched.dart  →  _ChampApiService.fetchGroupCount()
   /// GET ?category_id=N  →  { "group_count": N }
-  static String get getGroupCount => '$_baseUrl/get_group_count.php';
+  static String get getGroupCount => '$_baseUrl/group_count.php';
 
   /// championship_sched.dart / get_score.php
   /// GET ?category_id=N | ?match_id=N | ?category_id=N&bracket_type=`<round>`
@@ -147,11 +147,11 @@ class ApiConfig {
   static String get advanceKnockout => '$_baseUrl/advance_knockout.php';
 
   static String get cleanupChampionshipSeeds =>
-      '$_baseUrl/cleanup_champ_seeds.php';
+      '$_baseUrl/championship_seeds_reset.php';
 
   /// qualification_sched.dart → _ScheduleApiService.fetchGroupStandings()
   /// GET ?category_id=N  →  [ { group_label, team_id, team_name, mp, w, d, l, gf, ga, gd, pts } ]
-  static String get getGroupStandings => '$_baseUrl/get_group_standings.php';
+  static String get getGroupStandings => '$_baseUrl/group_standings.php';
 
   static String get getChampionshipMatchShells =>
       '$_baseUrl/get_championship_match_shells.php';

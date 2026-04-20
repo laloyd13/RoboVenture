@@ -356,7 +356,7 @@ class _LoadingScreenState extends State<LoadingScreen>
                         const SizedBox(height: 8),
                         // Message
                         Text(
-                          'Could not reach the server.\nMake sure this device and the server are on the same network.',
+                          'Connection Lost\nMake sure both devices are on the same network.',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.45),

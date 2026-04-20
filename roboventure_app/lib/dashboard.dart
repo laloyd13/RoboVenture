@@ -277,14 +277,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const Icon(Icons.wifi_off_rounded, color: Color(0xFFE57373), size: 44),
               const SizedBox(height: 12),
               const Text(
-                'No Connection',
+                'Connection Lost',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF2D3436)),
               ),
               const SizedBox(height: 8),
-              Text(
-                error,
+              const Text(
+                'Make sure both devices are on the same network.',
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                style: TextStyle(fontSize: 12, color: Colors.grey),
               ),
               if (ApiConfig.baseUrl.isNotEmpty) ...[
                 const SizedBox(height: 8),
@@ -312,12 +312,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Make sure this device and the server\nare on the same network.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11, color: Colors.grey.withOpacity(0.7), height: 1.6),
               ),
             ],
           ],

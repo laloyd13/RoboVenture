@@ -362,6 +362,7 @@ class _QualificationScheduleScreenState
 
   List<ArenaInfo> _arenas        = [];
   bool            _arenasLoading = true;
+  bool            _isRefreshing  = false;
   String?         _arenasError;
   TabController?  _tabController;
   // One GlobalKey per arena tab so we can call Scrollable.ensureVisible
@@ -448,6 +449,15 @@ class _QualificationScheduleScreenState
     }
   }
 
+  // ── RETRY (re-scan network, then reload) ──────────────────────────
+  Future<void> _handleRetry() async {
+    setState(() => _isRefreshing = true);
+    await ApiConfig.refresh();
+    if (!mounted) return;
+    setState(() => _isRefreshing = false);
+    await _loadArenas();
+  }
+
   void _ensureSchedule([int? arenaNumber]) {
     // We now fetch ALL matches in one call keyed by 0
     if (!_scheduleFutures.containsKey(0)) {
@@ -478,6 +488,7 @@ class _QualificationScheduleScreenState
     // Dismiss any visible snackbar immediately so it doesn't linger while the
     // scoring page is open.
     final messenger = ScaffoldMessenger.of(context);
+    final overlay   = Overlay.of(context);
     messenger.hideCurrentSnackBar();
 
     final bool? submitted = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) {
@@ -597,7 +608,7 @@ class _QualificationScheduleScreenState
     if (submitted == true) {
       if (soccerAdvanced) {
         // Show both toasts simultaneously via Overlay
-        _showStackedToasts(context);
+        _showStackedToasts(overlay);
       } else {
         messenger.showSnackBar(SnackBar(
           content: const Text('Score submitted successfully!'),
@@ -620,12 +631,11 @@ class _QualificationScheduleScreenState
 
   /// Shows "Team Advances" (top) and "Score submitted" (bottom) simultaneously
   /// using an Overlay, because Flutter's SnackBar queue shows them sequentially.
-  void _showStackedToasts(BuildContext ctx) {
-    final overlay = Overlay.of(ctx);
+  void _showStackedToasts(OverlayState overlay) {
     late OverlayEntry entry;
 
     entry = OverlayEntry(
-      builder: (_) => Positioned(
+      builder: (ctx) => Positioned(
         bottom: MediaQuery.of(ctx).viewInsets.bottom +
             MediaQuery.of(ctx).padding.bottom +
             16,
@@ -915,7 +925,7 @@ class _QualificationScheduleScreenState
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
               itemCount: _standings.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
               itemBuilder: (_, i) {
                 final entry = _standings.entries.elementAt(i);
                 return _GroupTable(label: entry.key, rows: entry.value);
@@ -944,15 +954,25 @@ class _QualificationScheduleScreenState
               child: Center(child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.error_outline, color: Colors.red, size: 40),
+                  const Icon(Icons.wifi_off_rounded, color: Colors.redAccent, size: 40),
                   const SizedBox(height: 12),
-                  Text(_arenasError!, textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 12)),
+                  const Text('Connection Lost',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.redAccent)),
+                  const SizedBox(height: 6),
+                  const Text('Make sure both devices are on the same network.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: Colors.grey)),
                   const SizedBox(height: 16),
                   ElevatedButton.icon(
-                    onPressed: _loadArenas,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Retry'),
+                    onPressed: _isRefreshing ? null : _handleRetry,
+                    icon: _isRefreshing
+                        ? const SizedBox(
+                            width: 16, height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.refresh),
+                    label: Text(_isRefreshing ? 'Retrying...' : 'Retry'),
                     style: ElevatedButton.styleFrom(
                         backgroundColor: _accentColor, foregroundColor: Colors.white),
                   ),
@@ -1121,10 +1141,15 @@ class _ArenaScheduleView extends StatelessWidget {
                 child: SizedBox(height: constraints.maxHeight, child: Center(child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.error_outline, color: Colors.red, size: 36),
+                    const Icon(Icons.wifi_off_rounded, color: Colors.redAccent, size: 36),
                     const SizedBox(height: 10),
-                    Text('${snapshot.error}', textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 12)),
+                    const Text('Connection Lost',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.redAccent)),
+                    const SizedBox(height: 6),
+                    const Text('Make sure both devices are on the same network.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
                     const SizedBox(height: 12),
                     ElevatedButton.icon(
                       onPressed: onRefresh,

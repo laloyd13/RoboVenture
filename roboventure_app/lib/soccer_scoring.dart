@@ -87,37 +87,47 @@ class SoccerScoringApiService {
   }
 
   static Future<SoccerMatchInfo?> fetchMatch(int id) async {
-    final r = await _get('get_match', {'match_id': '$id'});
-    if (r.statusCode == 200) return SoccerMatchInfo.fromJson(json.decode(r.body));
-    throw Exception('get_match failed');
+    try {
+      final r = await _get('get_match', {'match_id': '$id'});
+      if (r.statusCode == 200) return SoccerMatchInfo.fromJson(json.decode(r.body));
+    } catch (_) {}
+    return null;
   }
 
   static Future<SoccerRefereeInfo?> fetchReferee(int id) async {
-    final r = await _get('get_referee', {'referee_id': '$id'});
-    if (r.statusCode == 200) return SoccerRefereeInfo.fromJson(json.decode(r.body));
-    throw Exception('get_referee failed');
+    try {
+      final r = await _get('get_referee', {'referee_id': '$id'});
+      if (r.statusCode == 200) return SoccerRefereeInfo.fromJson(json.decode(r.body));
+    } catch (_) {}
+    return null;
   }
 
   static Future<SoccerTeamInfo?> fetchTeam(int id) async {
-    final r = await _get('get_team', {'team_id': '$id'});
-    if (r.statusCode == 200) return SoccerTeamInfo.fromJson(json.decode(r.body));
-    throw Exception('get_team failed');
+    try {
+      final r = await _get('get_team', {'team_id': '$id'});
+      if (r.statusCode == 200) return SoccerTeamInfo.fromJson(json.decode(r.body));
+    } catch (_) {}
+    return null;
   }
 
   static Future<List<SoccerCategoryInfo>> fetchCategories() async {
-    final r = await _get('get_categories');
-    if (r.statusCode == 200) {
-      return (json.decode(r.body) as List).map((e) => SoccerCategoryInfo.fromJson(e)).toList();
-    }
-    throw Exception('get_categories failed');
+    try {
+      final r = await _get('get_categories');
+      if (r.statusCode == 200) {
+        return (json.decode(r.body) as List).map((e) => SoccerCategoryInfo.fromJson(e)).toList();
+      }
+    } catch (_) {}
+    return [];
   }
 
   static Future<List<SoccerRoundInfo>> fetchRounds() async {
-    final r = await _get('get_rounds');
-    if (r.statusCode == 200) {
-      return (json.decode(r.body) as List).map((e) => SoccerRoundInfo.fromJson(e)).toList();
-    }
-    throw Exception('get_rounds failed');
+    try {
+      final r = await _get('get_rounds');
+      if (r.statusCode == 200) {
+        return (json.decode(r.body) as List).map((e) => SoccerRoundInfo.fromJson(e)).toList();
+      }
+    } catch (_) {}
+    return [];
   }
 
   static Future<List<Map<String, dynamic>>> fetchMatchScores(int id) async {
