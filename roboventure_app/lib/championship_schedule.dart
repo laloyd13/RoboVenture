@@ -18,14 +18,14 @@ const Color _headerMuted = Color(0xFF9E9EAD);
 // BRACKET MODE
 // Determined by group count fetched from get_group_count.php.
 //
-//   2 grp → 4 teams  → SF → 3RD → FINAL
-//   3 grp → 6 teams  → ELIM(3) → QF → 3RD → FINAL
-//   4 grp → 8 teams  → QF → SF → 3RD → FINAL
-//   5 grp → 10 teams → ELIM(2) → QF → SF → FINAL
-//   6 grp → 12 teams → ELIM(4) → QF → SF → FINAL
-//   7 grp → 14 teams → ELIM(6) → QF → SF → FINAL
-//   8 grp → 16 teams → R16(8)  → QF → SF → FINAL
-//   9 grp → 18 teams → ELIM(2) → R16 → QF → SF → FINAL
+//   2 grp → 4 teams  → SF → 3RD/FINAL
+//   3 grp → 6 teams  → ELIM(2) → SF → 3RD/FINAL
+//   4 grp → 8 teams  → QF → SF → 3RD/FINAL
+//   5 grp → 10 teams → ELIM(2) → QF → SF → 3RD/FINAL
+//   6 grp → 12 teams → ELIM(4) → QF → SF → 3RD/FINAL
+//   7 grp → 14 teams → ELIM(6) → QF → SF → 3RD/FINAL
+//   8 grp → 16 teams → R16(8)  → QF → SF → 3RD/FINAL
+//   9 grp → 18 teams → ELIM(2) → R16 → QF → SF → 3RD/FINAL
 // ─────────────────────────────────────────────
 enum _BracketMode {
   oneGroup,
@@ -63,11 +63,11 @@ List<String> _roundsForMode(_BracketMode mode) {
     case _BracketMode.oneGroup:
       return ['FINAL'];
     case _BracketMode.twoGroup:
-      return ['SEMI-FINAL', '3RD PLACE', 'FINAL'];
+      return ['SEMI-FINAL', 'FINAL'];
     case _BracketMode.fourGroup:
-      return ['QUARTER-FINAL', 'SEMI-FINAL', '3RD PLACE', 'FINAL'];
+      return ['QUARTER-FINAL', 'SEMI-FINAL', 'FINAL'];
     case _BracketMode.threeGroup:
-      return ['ELIM', 'SEMI-FINAL', '3RD PLACE', 'FINAL'];
+      return ['ELIM', 'SEMI-FINAL', 'FINAL'];
     case _BracketMode.fiveGroup:
     case _BracketMode.sixGroup:
     case _BracketMode.sevenGroup:
@@ -689,86 +689,7 @@ class _ChampionshipScheduleScreenState
       return;
     }
 
-    // ── RE-SCORE GUARD ───────────────────────────────────────────────────
     final isAlreadyScored = _scoredMatchInfo.containsKey(m.matchId);
-    if (isAlreadyScored) {
-      final score = _matchScores[m.matchId];
-      final scoreText = score != null
-          ? '${m.home} ${score.homeScore} – ${score.awayScore} ${m.away}'
-          : '${m.home} vs ${m.away}';
-      final confirmed = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => AlertDialog(
-          backgroundColor: const Color(0xFF1A0A4A),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: Color(0xFFFF9F43), width: 1.5),
-          ),
-          title: const Row(children: [
-            Icon(Icons.warning_amber_rounded,
-                color: Color(0xFFFF9F43), size: 22),
-            SizedBox(width: 10),
-            Text('Match Already Scored',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16)),
-          ]),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'This match has already been scored:',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
-              ),
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF9F43).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                      color: const Color(0xFFFF9F43).withOpacity(0.4)),
-                ),
-                child: Text(scoreText,
-                    style: const TextStyle(
-                        color: Color(0xFFFF9F43),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13)),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Do you want to re-score this match? '
-                'The previous score will be overwritten.',
-                style:
-                    TextStyle(color: Colors.white54, fontSize: 12, height: 1.5),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel',
-                  style: TextStyle(color: Colors.white54)),
-            ),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.edit_rounded, size: 16),
-              label: const Text('Re-Score'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFF9F43),
-                foregroundColor: Colors.black,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8)),
-              ),
-              onPressed: () => Navigator.of(context).pop(true),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-    }
 
     if (!mounted) return;
 
@@ -802,15 +723,17 @@ class _ChampionshipScheduleScreenState
 
     if (submitted == true) {
 
-      final isFinalMatch  = m.bracketType.toLowerCase() == 'final';
-      final isGroupMatch  = m.bracketType.toLowerCase() == 'group';
+      final bt            = m.bracketType.toLowerCase();
+      final isFinalMatch  = bt == 'final' || bt == 'third-place';
+      final isGroupMatch  = bt == 'group';
 
       // ── Build the snackbar BEFORE _refreshData() triggers setState,
       // which would clear any snackbar shown before the rebuild.
       SnackBar? snackBar;
+      SnackBar? advanceSnackBar;
 
       if (isFinalMatch) {
-        // Final match: only show "Score submitted successfully!" — no advancement.
+        // Final / 3rd-place match: only show "Score submitted successfully!" — no advancement.
         snackBar = SnackBar(
           content: const Text('Score submitted successfully!'),
           backgroundColor: const Color(0xFF5E975E),
@@ -870,12 +793,20 @@ class _ChampionshipScheduleScreenState
 
           } else if (status == 'knockout_advanced') {
             snackBar = SnackBar(
-              content: const Text('✅ Score submitted successfully!\n✅ Teams advanced to next round!'),
+              content: const Text('Score submitted successfully!'),
               backgroundColor: Colors.green,
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10)),
-              duration: const Duration(seconds: 3),
+              duration: const Duration(seconds: 4),
+            );
+            advanceSnackBar = const SnackBar(
+              content: Text('Team Advances to next round!'),
+              backgroundColor: Colors.green,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(10))),
+              duration: Duration(seconds: 4),
             );
 
           } else if (success) {
@@ -924,13 +855,17 @@ class _ChampionshipScheduleScreenState
       // Refresh data first (may call setState internally)
       await _refreshData();
 
-      // Show snackbar AFTER rebuild so it isn't cleared by setState.
-      // hideCurrentSnackBar() first so that if the user taps another match
-      // within 3 s the old "submitted" bar is dismissed immediately.
-      if (mounted && snackBar != null) {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(snackBar);
+      // Show notifications AFTER rebuild so they aren't cleared by setState.
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+        if (advanceSnackBar != null && snackBar != null) {
+          // Both toasts must appear simultaneously — Flutter's snackbar queue
+          // would show them one-after-the-other, so we use an Overlay instead.
+          _showStackedToasts(context);
+        } else if (snackBar != null) {
+          ScaffoldMessenger.of(context).showSnackBar(snackBar);
+        }
       }
 
     } else {
@@ -941,6 +876,66 @@ class _ChampionshipScheduleScreenState
     await Future.delayed(const Duration(milliseconds: 200));
     if (!mounted) return;
     _scrollSelectedTabIntoView(_tabController.index);
+  }
+
+  /// Shows "Team Advances" (top) and "Score submitted" (bottom) simultaneously
+  /// using an Overlay, because Flutter's SnackBar queue shows them sequentially.
+  void _showStackedToasts(BuildContext ctx) {
+    final overlay = Overlay.of(ctx);
+    late OverlayEntry entry;
+
+    entry = OverlayEntry(
+      builder: (_) => Positioned(
+        bottom: MediaQuery.of(ctx).viewInsets.bottom +
+            MediaQuery.of(ctx).padding.bottom +
+            16,
+        left: 16,
+        right: 16,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ── Top toast: Team Advances ──────────────────────────────
+            Material(
+              color: Colors.transparent,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2E7D32),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Text(
+                  '🏆 Team Advances to next round!',
+                  style: TextStyle(color: Colors.white, fontSize: 14),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            // ── Bottom toast: Score submitted ─────────────────────────
+            Material(
+              color: Colors.transparent,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.green,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Text(
+                  '✅ Score submitted successfully!',
+                  style: TextStyle(color: Colors.white, fontSize: 14),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    overlay.insert(entry);
+    Future.delayed(const Duration(seconds: 4), () {
+      if (entry.mounted) entry.remove();
+    });
   }
 
   void _scrollSelectedTabIntoView(int index) {
@@ -1086,33 +1081,34 @@ class _ChampionshipScheduleScreenState
       ]),
     ),
 
-    KeyedSubtree(
-      key: _bracketKey,
-      child: Container(
-        color: _accentColor,
-        child: TabBar(
-          key: _tabBarKey,
-          controller: _tabController,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white60,
-          indicatorColor: Colors.white,
-          indicatorWeight: 3,
-          dividerColor: Colors.transparent,
-          isScrollable: _rounds.length > 3,
-          labelStyle: const TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.8),
-          tabs: _rounds.asMap().entries
-              .map((e) => Tab(
-                key: e.key < _tabKeys.length ? _tabKeys[e.key] : null,
-                icon: Icon(_roundIcon(e.value), size: 14),
-                text: e.value,
-              ))
-              .toList(),
+    if (!_loading)
+      KeyedSubtree(
+        key: _bracketKey,
+        child: Container(
+          color: _accentColor,
+          child: TabBar(
+            key: _tabBarKey,
+            controller: _tabController,
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white60,
+            indicatorColor: Colors.white,
+            indicatorWeight: 3,
+            dividerColor: Colors.transparent,
+            isScrollable: _rounds.length > 3,
+            labelStyle: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.8),
+            tabs: _rounds.asMap().entries
+                .map((e) => Tab(
+                  key: e.key < _tabKeys.length ? _tabKeys[e.key] : null,
+                  icon: Icon(_roundIcon(e.value), size: 14),
+                  text: e.value,
+                ))
+                .toList(),
+          ),
         ),
       ),
-    ),
   ]);
 
   Widget _buildBody() {
@@ -1184,7 +1180,15 @@ class _ChampionshipScheduleScreenState
     return TabBarView(
       controller: _tabController,
       children: _rounds.map((round) {
-        final matches = _matchesByRound[round] ?? [];
+        // The FINAL tab also absorbs 3RD PLACE matches (classification match).
+        final bool isFinalTab = round == 'FINAL';
+        final List<_ChampMatch> matches = isFinalTab
+            ? [
+                ...(_matchesByRound['3RD PLACE'] ?? []),
+                ...(_matchesByRound['FINAL'] ?? []),
+              ]
+            : (_matchesByRound[round] ?? []);
+
         if (matches.isEmpty) {
           return RefreshIndicator(
             onRefresh: _refreshData,
@@ -1209,6 +1213,71 @@ class _ChampionshipScheduleScreenState
             ),
           );
         }
+
+        if (isFinalTab) {
+          // Render 3RD PLACE and FINAL as labelled sections (no re-sorting
+          // across the two groups — each section keeps scored-last order).
+          List<_ChampMatch> sortSection(List<_ChampMatch> src) =>
+              [...src]..sort((a, b) {
+                  final aScored = _scoredMatchInfo.containsKey(a.matchId) ? 1 : 0;
+                  final bScored = _scoredMatchInfo.containsKey(b.matchId) ? 1 : 0;
+                  if (aScored != bScored) return aScored.compareTo(bScored);
+                  return a.matchId.compareTo(b.matchId);
+                });
+
+          final thirdPlaceMatches = sortSection(_matchesByRound['3RD PLACE'] ?? []);
+          final finalMatches      = sortSection(_matchesByRound['FINAL'] ?? []);
+
+          Widget sectionLabel(String label, IconData icon) => Padding(
+            padding: const EdgeInsets.only(bottom: 8, top: 4),
+            child: Row(children: [
+              Icon(icon, size: 13, color: _headerMuted),
+              const SizedBox(width: 6),
+              Text(label,
+                  style: const TextStyle(
+                      color: _headerMuted,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.2)),
+              const SizedBox(width: 8),
+              Expanded(child: Divider(color: _headerMuted.withOpacity(0.3), thickness: 1)),
+            ]),
+          );
+
+          return RefreshIndicator(
+            onRefresh: _refreshData,
+            color: _accentColor,
+            child: ListView(
+              padding: const EdgeInsets.all(14),
+              children: [
+                if (thirdPlaceMatches.isNotEmpty) ...[
+                  sectionLabel('3RD PLACE', Icons.military_tech_outlined),
+                  ...thirdPlaceMatches.map((m) {
+                    final isScored   = _scoredMatchInfo.containsKey(m.matchId);
+                    final matchScore = _matchScores[m.matchId];
+                    return _ChampMatchCard(
+                      match: m, isScored: isScored,
+                      matchScore: matchScore, onTap: () => _openScoring(m),
+                    );
+                  }),
+                  const SizedBox(height: 6),
+                ],
+                if (finalMatches.isNotEmpty) ...[
+                  sectionLabel('FINAL', Icons.emoji_events_rounded),
+                  ...finalMatches.map((m) {
+                    final isScored   = _scoredMatchInfo.containsKey(m.matchId);
+                    final matchScore = _matchScores[m.matchId];
+                    return _ChampMatchCard(
+                      match: m, isScored: isScored,
+                      matchScore: matchScore, onTap: () => _openScoring(m),
+                    );
+                  }),
+                ],
+              ],
+            ),
+          );
+        }
+
         // Scored matches sink to the bottom; unscored stay on top.
         final sortedMatches = [...matches]..sort((a, b) {
             final aScored = _scoredMatchInfo.containsKey(a.matchId) ? 1 : 0;
@@ -1307,7 +1376,7 @@ class _ChampMatchCard extends StatelessWidget {
     );
 
     return GestureDetector(
-      onTap: _isTbd ? null : onTap,
+      onTap: (isScored || _isTbd) ? null : onTap,
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         decoration: BoxDecoration(
@@ -1350,9 +1419,7 @@ class _ChampMatchCard extends StatelessWidget {
                         color: Colors.white54, fontSize: 9)),
               ],
               const Spacer(),
-              if (isScored)
-                _Chip(label: 'SCORED', color: Colors.greenAccent)
-              else if (_isTbd)
+              if (_isTbd)
                 _Chip(label: 'TBD', color: Colors.white54),
             ]),
           ),

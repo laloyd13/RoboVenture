@@ -402,7 +402,7 @@ if ($currentType === 'group') {
     // ── A7. Find next knockout round ──────────────────────────────────
     $knownOrder = [
         'elimination', 'round-of-32', 'round-of-16',
-        'quarter-finals', 'semi-finals', 'final'
+        'quarter-finals', 'semi-finals', 'third-place', 'final'
     ];
 
     $roundsStmt = $conn->prepare("
@@ -410,7 +410,7 @@ if ($currentType === 'group') {
         FROM   tbl_match m
         WHERE  m.bracket_type IN (
                    'elimination', 'round-of-32', 'round-of-16',
-                   'quarter-finals', 'semi-finals', 'final'
+                   'quarter-finals', 'semi-finals', 'third-place', 'final'
                )
     ");
     $roundsStmt->execute();
@@ -419,6 +419,8 @@ if ($currentType === 'group') {
 
     $presentRounds = [];
     while ($r = $roundsResult->fetch_assoc()) {
+        // Skip third-place and final — they are not valid entry rounds from group stage
+        if ($r['bracket_type'] === 'third-place' || $r['bracket_type'] === 'final') continue;
         $presentRounds[] = $r['bracket_type'];
     }
 
@@ -554,7 +556,7 @@ if ($currentType === 'final' || $currentType === 'third-place') {
 // ── B2. Determine next round ──────────────────────────────────────────
 $knownOrder = [
     'elimination', 'round-of-32', 'round-of-16',
-    'quarter-finals', 'semi-finals', 'final'
+    'quarter-finals', 'semi-finals', 'third-place', 'final'
 ];
 
 $roundsStmt = $conn->prepare("
@@ -562,7 +564,7 @@ $roundsStmt = $conn->prepare("
     FROM   tbl_match m
     WHERE  m.bracket_type IN (
                'elimination', 'round-of-32', 'round-of-16',
-               'quarter-finals', 'semi-finals', 'final'
+               'quarter-finals', 'semi-finals', 'third-place', 'final'
            )
 ");
 $roundsStmt->execute();
@@ -571,6 +573,8 @@ $roundsStmt->close();
 
 $presentRounds = [];
 while ($r = $roundsResult->fetch_assoc()) {
+    // Exclude third-place — it is a parallel branch, not a sequential round
+    if ($r['bracket_type'] === 'third-place') continue;
     $presentRounds[] = $r['bracket_type'];
 }
 usort($presentRounds, function ($a, $b) use ($knownOrder) {

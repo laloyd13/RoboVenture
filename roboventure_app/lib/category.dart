@@ -1,8 +1,8 @@
 // ignore_for_file: unused_field, deprecated_member_use
 
 import 'package:flutter/material.dart';
-import 'qualification_sched.dart';
-import 'championship_sched.dart';
+import 'qualification_schedule.dart';
+import 'championship_schedule.dart';
 
 class MainMenuScreen extends StatelessWidget {
   final int categoryId;
@@ -228,7 +228,7 @@ class MainMenuScreen extends StatelessWidget {
                       ),
 
                       _MenuButton(
-                        label: 'QUALIFICATION',
+                        label: _isSoccerCategory ? 'GROUP STAGE' : 'QUALIFICATION',
                         icon: Icons.format_list_numbered_rounded,
                         color: accentColor,
                         isPrimary: true,

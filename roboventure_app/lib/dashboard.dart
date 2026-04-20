@@ -16,6 +16,7 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<List<dynamic>>? _categoriesFuture;
+  bool _isRefreshing = false;
 
   final Map<String, dynamic> _categoryThemes = {
     'Aspiring Makers': {'icon': Icons.build_circle_outlined, 'color': const Color(0xFF9B84D1)},
@@ -54,8 +55,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> _handleRefresh() async {
+  /// Drag-to-refresh: fast path — skip network re-scan, just reload data.
+  Future<void> _handleDragRefresh() async {
+    setState(() => _categoriesFuture = _fetchCategories());
+    await _categoriesFuture;
+  }
+
+  /// Retry button: full path — re-scan network first, then reload data.
+  Future<void> _handleRetry() async {
+    setState(() => _isRefreshing = true);
+    await ApiConfig.refresh();
+    if (!mounted) return;
     setState(() {
+      _isRefreshing = false;
       _categoriesFuture = _fetchCategories();
     });
     await _categoriesFuture;
@@ -80,7 +92,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     return const Center(child: CircularProgressIndicator(color: Color(0xFF9B84D1)));
                   } else if (snapshot.hasError) {
                     return RefreshIndicator(
-                      onRefresh: _handleRefresh,
+                      onRefresh: _handleDragRefresh,
                       color: const Color(0xFF7B56B3),
                       backgroundColor: Colors.white,
                       child: SingleChildScrollView(
@@ -93,7 +105,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     );
                   } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
                     return RefreshIndicator(
-                      onRefresh: _handleRefresh,
+                      onRefresh: _handleDragRefresh,
                       color: const Color(0xFF7B56B3),
                       backgroundColor: Colors.white,
                       child: SingleChildScrollView(
@@ -109,7 +121,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   final categories = snapshot.data!;
 
                   return RefreshIndicator(
-                    onRefresh: _handleRefresh,
+                    onRefresh: _handleDragRefresh,
                     color: const Color(0xFF7B56B3),
                     backgroundColor: Colors.white,
                     child: SingleChildScrollView(
@@ -248,15 +260,68 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildErrorState(String error) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.error_outline, color: Colors.red, size: 40),
-          const SizedBox(height: 10),
-          Text(error, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)),
-          const SizedBox(height: 15),
-          ElevatedButton(onPressed: _handleRefresh, child: const Text("Retry")),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (_isRefreshing) ...[
+              const CircularProgressIndicator(color: Color(0xFF7B56B3)),
+              const SizedBox(height: 16),
+              const Text(
+                'Scanning network for server\u2026',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Color(0xFF7B56B3)),
+              ),
+            ] else ...[
+              const Icon(Icons.wifi_off_rounded, color: Color(0xFFE57373), size: 44),
+              const SizedBox(height: 12),
+              const Text(
+                'No Connection',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF2D3436)),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                error,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              if (ApiConfig.baseUrl.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                  ),
+                  child: Text(
+                    ApiConfig.baseUrl,
+                    style: const TextStyle(fontSize: 10, fontFamily: 'monospace', color: Colors.grey),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                onPressed: _handleRetry,
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text('Retry'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF7B56B3),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Make sure this device and the server\nare on the same network.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: Colors.grey.withOpacity(0.7), height: 1.6),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

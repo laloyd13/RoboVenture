@@ -309,13 +309,13 @@ class SaveDelegate {
 // ─────────────────────────────────────────────
 // MATCH STATE PERSISTENCE
 // Saves mission counters + timer to SharedPreferences on every change.
-// Key prefix: "mbot1_state_<matchId>_<field>"
+// Key prefix: "mbot2_state_<matchId>_<field>"
 // Saved state expires after 5 minutes of inactivity — if the user doesn't
 // return within that window, the stale state is discarded automatically.
 // ─────────────────────────────────────────────
-class _Mbot1StatePersistence {
+class _Mbot2StatePersistence {
   static const int _maxAgeMinutes = 5;
-  static String _k(int matchId, String field) => 'mbot1_state_${matchId}_$field';
+  static String _k(int matchId, String field) => 'mbot2_state_${matchId}_$field';
 
   static Future<void> save({
     required int matchId,
@@ -355,7 +355,7 @@ class _Mbot1StatePersistence {
       final age = DateTime.now()
           .difference(DateTime.fromMillisecondsSinceEpoch(savedAt));
       if (age.inMinutes >= _maxAgeMinutes) {
-        debugPrint('[Mbot1Persistence] Saved state expired (${age.inMinutes}m old). Discarding.');
+        debugPrint('[Mbot2Persistence] Saved state expired (${age.inMinutes}m old). Discarding.');
         await clear(matchId);
         return null;
       }
@@ -404,13 +404,13 @@ const Color resetPurple = Color(0xFF79569A);
 // ─────────────────────────────────────────────
 // SCORING PAGE
 // ─────────────────────────────────────────────
-class Mbot1ScoringPage extends StatefulWidget {
+class Mbot2ScoringPage extends StatefulWidget {
 
   final int matchId;
   final int teamId;
   final int refereeId;
 
-  const Mbot1ScoringPage({
+  const Mbot2ScoringPage({
     super.key,
     required this.matchId,
     required this.teamId,
@@ -418,10 +418,10 @@ class Mbot1ScoringPage extends StatefulWidget {
   });
 
   @override
-  State<Mbot1ScoringPage> createState() => _Mbot1ScoringPageState();
+  State<Mbot2ScoringPage> createState() => _Mbot2ScoringPageState();
 }
 
-class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
+class _Mbot2ScoringPageState extends State<Mbot2ScoringPage>
     with WidgetsBindingObserver {
   // ── Signature delegates ──────────────────────
   final SaveDelegate _captainDelegate = SaveDelegate();
@@ -435,7 +435,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
   int m01Qty = 0, m02Qty = 0, m03Qty = 0, m04Qty = 0, m05Qty = 0,
       violations = 0;
   final int m01Points = 30, m02Points = 30, m03Points = 30, m04Points = 30,
-      m05Points = 25;
+      m05Points = 30;
 
   int get independentScore =>
       (m01Qty * m01Points) +
@@ -508,7 +508,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
+    void didChangeAppLifecycleState(AppLifecycleState state) {
     // `inactive` fires for notification panel, recent-apps switcher, and
     // incoming calls — the user hasn't left the app, so the timer must keep
     // running through those transient states. Do NOT stop the timer here.
@@ -542,7 +542,6 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
       // (notification panel / recent-apps peek) — nothing to do.
     }
   }
-
   void _showAwayWarningDialog() {
     showDialog(
       context: context,
@@ -672,7 +671,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
             ),
             const SizedBox(height: 8),
             Text(
-              'The match is still in progress. The timer and scores will be reset. What would you like to do?',
+              'The match is still in progress. The timer and will be reset. What would you like to do?',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12, height: 1.5),
             ),
@@ -724,7 +723,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
   }
 
   /// Persist current state to disk. Called on every scoring or timer change.
-  Future<void> _saveMatchState() => _Mbot1StatePersistence.save(
+  Future<void> _saveMatchState() => _Mbot2StatePersistence.save(
     matchId:          widget.matchId,
     m01Qty:           m01Qty,
     m02Qty:           m02Qty,
@@ -738,7 +737,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
 
   /// Restore previously saved state (if any), then fetch match data.
   Future<void> _initStateAndData() async {
-    final saved = await _Mbot1StatePersistence.load(widget.matchId);
+    final saved = await _Mbot2StatePersistence.load(widget.matchId);
     if (saved != null && mounted) {
       setState(() {
         m01Qty            = saved['m01'] as int;
@@ -1052,13 +1051,15 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
     );
 
     if (!mounted) return;
-    rootNav.pop();
+    rootNav.pop(); // dismiss loading dialog
 
     if (success) {
       // Clear saved state — match is done, next open should start fresh
-      await _Mbot1StatePersistence.clear(widget.matchId);
+      await _Mbot2StatePersistence.clear(widget.matchId);
       if (!mounted) return;
-      rootNav.pop(true); // return true → qualification screen shows snackbar
+      rootNav.pop(); // dismiss the summary bottom sheet
+      if (!mounted) return;
+      rootNav.pop(true); // pop the scoring page → qualification screen shows snackbar
     } else {
       setState(() => _isSubmitting = false);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -1370,7 +1371,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
                   children: [
                     // ── HEADER ROW ─────────────────
                     Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Column(
                           children: [
@@ -1406,7 +1407,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
                         const SizedBox(width: 15),
                         Expanded(
                           child: Padding(
-                            padding: const EdgeInsets.only(bottom: 5),
+                            padding: const EdgeInsets.only(top: 10),
                             child: Text(
                               '${_selectedCategory?.categoryType.toUpperCase() ?? 'ROBOVENTURE'} FORM',
                               style: const TextStyle(
@@ -1497,7 +1498,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
 
                           // ── MISSIONS ────────────────
                           _buildMissionCard(
-                              "M01: Smart Triage Sorting(Cylinder)",
+                              "M01: Smart Triage Sorting (Cylinder)",
                               m01Qty,
                               m01Points,
                               1,
@@ -1506,7 +1507,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
                                   setState(() => m01Qty = val)),
                           const SizedBox(height: 20),
                           _buildMissionCard(
-                              "M02: Smart Triage Sorting(Cube)",
+                              "M02: Smart Triage Sorting (Cube)",
                               m02Qty,
                               m02Points,
                               1,
@@ -1524,7 +1525,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
                                   setState(() => m03Qty = val)),
                           const SizedBox(height: 20),
                           _buildMissionCard(
-                              "M04: Critical Rescue Delivery",
+                              "M04: Voice-Assisted Medical Routing",
                               m04Qty,
                               m04Points,
                               4,
@@ -1533,10 +1534,10 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
                                   setState(() => m04Qty = val)),
                           const SizedBox(height: 30),
                           _buildMissionCard(
-                              "M05: Safe Passage Protocol",
+                              "M05: Companion Assistance Transfer",
                               m05Qty,
                               m05Points,
-                              2,
+                              4,
                               missionLavender.withOpacity(0.7),
                               (val) =>
                                   setState(() => m05Qty = val)),
@@ -1553,7 +1554,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
                               "VIOLATION",
                               violations,
                               10,
-                              99, // no max limit for violations
+                              99,
                               penaltyRed,
                               (val) =>
                                   setState(() => violations = val)),
@@ -1645,7 +1646,7 @@ class _Mbot1ScoringPageState extends State<Mbot1ScoringPage>
                     m05Qty = 0;
                     violations = 0;
                   });
-                  _Mbot1StatePersistence.clear(widget.matchId);
+                  _Mbot2StatePersistence.clear(widget.matchId);
                 },
               ),
             ),

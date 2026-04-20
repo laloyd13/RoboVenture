@@ -501,10 +501,12 @@ class _TimerScoringPageState extends State<TimerScoringPage>
     );
 
     if (!mounted) return;
-    rootNav.pop();
+    rootNav.pop(); // dismiss loading dialog
 
     if (success) {
-      rootNav.pop(true); // return true → qualification screen shows snackbar
+      rootNav.pop(); // dismiss the summary bottom sheet
+      if (!mounted) return;
+      rootNav.pop(true); // pop the scoring page → qualification screen shows snackbar
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Submission failed. Please try again.'),

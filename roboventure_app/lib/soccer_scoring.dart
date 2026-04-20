@@ -1064,13 +1064,6 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
       await _MatchStatePersistence.clear(widget.matchId);
       if (!mounted) return;
       if (ctx.mounted) Navigator.pop(ctx); // close the MATCH SUMMARY dialog
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Score submitted successfully!'),
-          backgroundColor: Color(0xFF5E975E),
-          duration: Duration(seconds: 3),
-        ));
-      }
       if (mounted) Navigator.pop(context, true); // return true → schedule screen shows snackbar
     } else {
       if (!mounted) return;

@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'loading_screen.dart';
+import 'api_config.dart';
+import 'splash_screen.dart';
 
 /// Extension to replace deprecated `withOpacity()`
 extension ColorX on Color {
@@ -15,7 +16,12 @@ extension ColorX on Color {
   }
 }
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Auto-discover the RoboVenture server on the local network
+  await ApiConfig.init();
+
   runApp(const RoboVentureApp());
 }
 

@@ -1,37 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// feedback_utils.dart
-// Cross-platform haptic vibration and audio helpers for RoboVenture.
-//
-// SOUND MODE BEHAVIOUR:
-//   ┌─────────────────┬───────────┬─────────┐
-//   │ Device mode     │ Vibration │  Sound  │
-//   ├─────────────────┼───────────┼─────────┤
-//   │ Normal (ring)   │    ✓      │    ✓    │
-//   │ Vibrate only    │    ✓      │    ✗    │
-//   │ Silent / mute   │    ✗      │    ✗    │
-//   └─────────────────┴───────────┴─────────┘
-//   Vibration fires on normal and vibrate-only modes.
-//   Silent/mute suppresses both vibration and audio to respect user intent.
-//   Audio only plays when the device is NOT silenced/muted.
-//
-// SETUP REQUIRED (one-time):
-//   pubspec.yaml must include:
-//     vibration: ^2.0.0
-//     audioplayers: ^6.0.0
-//     sound_mode: ^2.0.0        ← replaces volume_controller
-//   assets:
-//     - assets/sounds/timesup.mp3
-//
-//   android/app/src/main/AndroidManifest.xml must include:
-//     <uses-permission android:name="android.permission.VIBRATE"/>
-//
-// WHY sound_mode INSTEAD OF volume_controller:
-//   volume_controller reads media volume, which is a separate stream from the
-//   ringer/silent switch. A device can be on silent with media volume at 100%.
-//   sound_mode reads Android AudioManager.getRingerMode() directly, which is
-//   the actual silent/vibrate/normal switch state.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import 'package:vibration/vibration.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:sound_mode/sound_mode.dart';

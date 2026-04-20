@@ -144,32 +144,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit();
     }
 
+    // ── Fixed round order ───────────────────────────────────────────────────
+    // Use a hardcoded canonical sequence instead of time-based ordering.
+    // Time-based ordering is unreliable: 'final' and 'third-place' share the
+    // same schedule_start, causing them to sort alphabetically ('final' before
+    // 'third-place'), which breaks the feeder-chain logic.
+    //
+    // 'third-place' and 'final' are SIBLINGS — both fed from 'semi-finals'.
+    // They are NOT in a linear chain, so they must be handled separately below.
+    $canonicalOrder = [
+        'group', 'elimination', 'round-of-32', 'round-of-16', 'round-of-8',
+        'quarter-finals', 'semi-finals', 'third-place', 'final',
+    ];
+
+    // Fetch only bracket types that actually exist for this category.
     $bStmt = $conn->prepare("
-        SELECT DISTINCT m.bracket_type,
-               MIN(s.schedule_start) AS first_time
+        SELECT DISTINCT m.bracket_type
         FROM tbl_match m
-        LEFT JOIN tbl_schedule s ON s.schedule_id = m.schedule_id
-        WHERE m.bracket_type IN (
-            'group','elimination','round-of-32','round-of-16','round-of-8',
-            'quarter-finals','semi-finals','third-place','final'
-        )
-        GROUP BY m.bracket_type
-        ORDER BY first_time ASC, m.bracket_type ASC
+        INNER JOIN tbl_teamschedule ts ON ts.match_id = m.match_id
+        INNER JOIN tbl_team t ON t.team_id = ts.team_id
+        WHERE t.category_id = ?
+          AND m.bracket_type IN (
+              'group','elimination','round-of-32','round-of-16','round-of-8',
+              'quarter-finals','semi-finals','third-place','final'
+          )
     ");
+    $bStmt->bind_param('i', $category_id);
     $bStmt->execute();
     $bResult = $bStmt->get_result();
     $bStmt->close();
 
-    $presentRounds = [];
+    $presentSet = [];
     while ($r = $bResult->fetch_assoc()) {
-        $presentRounds[] = $r['bracket_type'];
+        $presentSet[$r['bracket_type']] = true;
+    }
+
+    // Build ordered list respecting canonical sequence, excluding siblings.
+    // 'third-place' and 'final' are handled separately — remove them from the
+    // linear chain so they don't get treated as feeders for each other.
+    $linearRounds = [];
+    foreach ($canonicalOrder as $rt) {
+        if (isset($presentSet[$rt]) && $rt !== 'third-place' && $rt !== 'final') {
+            $linearRounds[] = $rt;
+        }
     }
 
     $orphanedMatchTeams = [];
 
-    for ($i = 1; $i < count($presentRounds); $i++) {
-        $currentRound = $presentRounds[$i];
-        $feederRound  = $presentRounds[$i - 1];
+    // ── Linear rounds: each round's feeder is the previous round ────────────
+    for ($i = 1; $i < count($linearRounds); $i++) {
+        $currentRound = $linearRounds[$i];
+        $feederRound  = $linearRounds[$i - 1];
 
         $stmt = $conn->prepare("
             SELECT ts_cur.match_id AS cur_match_id,
@@ -200,6 +225,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               )
         ");
         $stmt->bind_param('isss', $category_id, $currentRound, $feederRound, $feederRound);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $stmt->close();
+
+        while ($row = $res->fetch_assoc()) {
+            $orphanedMatchTeams[] = [
+                'match_id' => intval($row['cur_match_id']),
+                'team_id'  => intval($row['team_id']),
+            ];
+        }
+    }
+
+    // ── Sibling rounds: 'final' and 'third-place' both feed from 'semi-finals'
+    // They must never be treated as feeders for each other.
+    // The feeder for both is the last round in $linearRounds (semi-finals or
+    // whatever the deepest linear round is for this bracket size).
+    $siblingFeeder = !empty($linearRounds) ? end($linearRounds) : null;
+
+    foreach (['final', 'third-place'] as $siblingRound) {
+        if (!isset($presentSet[$siblingRound]) || $siblingFeeder === null) continue;
+
+        $stmt = $conn->prepare("
+            SELECT ts_cur.match_id AS cur_match_id,
+                   ts_cur.team_id  AS team_id
+            FROM tbl_teamschedule ts_cur
+            INNER JOIN tbl_match m_cur ON m_cur.match_id = ts_cur.match_id
+            INNER JOIN tbl_team  t     ON t.team_id      = ts_cur.team_id
+            WHERE t.category_id      = ?
+              AND m_cur.bracket_type = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM tbl_score sc
+                  WHERE sc.match_id = ts_cur.match_id
+              )
+              AND EXISTS (
+                  SELECT 1
+                  FROM tbl_teamschedule ts_feed
+                  INNER JOIN tbl_match m_feed ON m_feed.match_id = ts_feed.match_id
+                  WHERE ts_feed.team_id     = ts_cur.team_id
+                    AND m_feed.bracket_type = ?
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM tbl_teamschedule ts_feed2
+                  INNER JOIN tbl_match  m_feed2 ON m_feed2.match_id = ts_feed2.match_id
+                  INNER JOIN tbl_score  sc_feed ON sc_feed.match_id = ts_feed2.match_id
+                  WHERE ts_feed2.team_id     = ts_cur.team_id
+                    AND m_feed2.bracket_type = ?
+              )
+        ");
+        $stmt->bind_param('isss', $category_id, $siblingRound, $siblingFeeder, $siblingFeeder);
         $stmt->execute();
         $res = $stmt->get_result();
         $stmt->close();

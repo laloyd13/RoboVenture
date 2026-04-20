@@ -5,8 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
-import 'mbot1_scoring.dart';
-import 'mbot2_scoring.dart';
+import 'c1_scoring.dart';
+import 'c2_scoring.dart';
 import 'timer_scoring.dart';
 import 'soccer_scoring.dart';
 import 'api_config.dart';
@@ -127,10 +127,8 @@ class _SoccerMatchRow {
   final int    awayId;
   final int    arena;
   final bool   isScored;
-  final String groupLabel;  // e.g. 'A', 'B' — from tbl_soccer_groups via home team
-  final String matchTime;   // e.g. '09:30' — competition time from tbl_schedule
-  // Winner info — only meaningful when isScored == true
-  // 'home' | 'away' | 'draw' | '' (not scored yet)
+  final String groupLabel;
+  final String matchTime;
   final String winner;
   final int    homeScore;
   final int    awayScore;
@@ -523,6 +521,7 @@ class _QualificationScheduleScreenState
     // Uses scoring.php?action=get_match_scores (same endpoint the scoring
     // page itself uses) to read back goals and determine winner/loser.
     debugPrint('[qual] submitted=$submitted soccer=$_soccer awayId=${entry.awayTeamId}');
+    bool soccerAdvanced = false; // true if a winner was seeded into the next round
     if (_soccer && submitted == true && entry.awayTeamId != 0) {
       try {
         // Use the same endpoint the scoring page uses internally
@@ -543,6 +542,7 @@ class _QualificationScheduleScreenState
           debugPrint('[qual] home=${entry.teamId} goals=$homeGoals  away=${entry.awayTeamId} goals=$awayGoals');
 
           if (homeGoals != awayGoals) {
+            soccerAdvanced = true;
             final winnerTeamId = homeGoals > awayGoals ? entry.teamId     : entry.awayTeamId;
             final loserTeamId  = homeGoals > awayGoals ? entry.awayTeamId : entry.teamId;
 
@@ -590,6 +590,25 @@ class _QualificationScheduleScreenState
     await _refreshScoredIds();
     if (_soccer) await _refreshStandings();
 
+    // ── Show notification toasts ──────────────────────────────────────
+    if (!mounted) return;
+    messenger.hideCurrentSnackBar();
+
+    if (submitted == true) {
+      if (soccerAdvanced) {
+        // Show both toasts simultaneously via Overlay
+        _showStackedToasts(context);
+      } else {
+        messenger.showSnackBar(SnackBar(
+          content: const Text('Score submitted successfully!'),
+          backgroundColor: const Color(0xFF5E975E),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    }
+
     // Wait for the orientation change + layout to fully settle before
     // trying to scroll the tab into view. One frame is not enough after
     // a landscape→portrait transition, so we use a short delay then
@@ -597,6 +616,66 @@ class _QualificationScheduleScreenState
     await Future.delayed(const Duration(milliseconds: 200));
     if (!mounted) return;
     _scrollSelectedTabIntoView(savedTabIndex);
+  }
+
+  /// Shows "Team Advances" (top) and "Score submitted" (bottom) simultaneously
+  /// using an Overlay, because Flutter's SnackBar queue shows them sequentially.
+  void _showStackedToasts(BuildContext ctx) {
+    final overlay = Overlay.of(ctx);
+    late OverlayEntry entry;
+
+    entry = OverlayEntry(
+      builder: (_) => Positioned(
+        bottom: MediaQuery.of(ctx).viewInsets.bottom +
+            MediaQuery.of(ctx).padding.bottom +
+            16,
+        left: 16,
+        right: 16,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ── Top toast: Team Advances ──────────────────────────────
+            Material(
+              color: Colors.transparent,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2E7D32),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Text(
+                  '🏆 Team Advances to next round!',
+                  style: TextStyle(color: Colors.white, fontSize: 14),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            // ── Bottom toast: Score submitted ─────────────────────────
+            Material(
+              color: Colors.transparent,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF5E975E),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Text(
+                  '✅ Score submitted successfully!',
+                  style: TextStyle(color: Colors.white, fontSize: 14),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    overlay.insert(entry);
+    Future.delayed(const Duration(seconds: 4), () {
+      if (entry.mounted) entry.remove();
+    });
   }
 
   void _scrollSelectedTabIntoView(int index) {
@@ -667,7 +746,7 @@ class _QualificationScheduleScreenState
           Text(widget.competitionTitle.toUpperCase(),
               style: const TextStyle(color: Colors.white, fontSize: 14,
                   fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
-          Text(_soccer ? 'MATCH SCHEDULE' : 'QUALIFICATION',
+          Text(_soccer ? 'GROUP STAGE' : 'QUALIFICATION',
               style: const TextStyle(color: Colors.white70, fontSize: 10,
                   fontWeight: FontWeight.bold)),
         ]),
@@ -710,7 +789,7 @@ class _QualificationScheduleScreenState
           child: Column(
               crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(
-              _soccer ? 'MATCH SCHEDULE' : 'QUALIFICATION SCHEDULE',
+              _soccer ? 'GROUP STAGE SCHEDULE' : 'QUALIFICATION SCHEDULE',
               style: const TextStyle(color: Colors.white,
                   fontSize: 14, fontWeight: FontWeight.w900,
                   letterSpacing: 0.5),

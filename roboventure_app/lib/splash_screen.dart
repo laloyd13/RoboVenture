@@ -122,8 +122,12 @@ class _LoadingScreenState extends State<LoadingScreen>
 
   Future<void> _retry() async {
     setState(() => _networkError = false);
-    // Restart the progress bar from current position
+    // Reset and restart the progress bar from zero
+    _barCtrl.reset();
     _barCtrl.forward();
+    // Re-scan the network for the server before checking reachability
+    await ApiConfig.refresh();
+    if (!mounted) return;
     final reachable = await _checkNetwork();
     if (!mounted) return;
 
