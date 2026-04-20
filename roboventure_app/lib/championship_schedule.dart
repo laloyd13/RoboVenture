@@ -288,19 +288,32 @@ class _ChampApiService {
 
   static Future<Map<int, String>> fetchScoredMatchInfo(
       int categoryId) async {
+    // Use the same endpoint as fetchMatchScores so isScored is always
+    // consistent with the score data — championship_matches_scored.php
+    // is a separate table that may not be populated, causing cards to
+    // never show COMPLETED even after a score is submitted.
+    const champBracketTypes = {
+      'elimination', 'round-of-32', 'round-of-16', 'round-of-8',
+      'quarter-finals', 'semi-finals', 'third-place', 'final',
+    };
     final url = Uri.parse(
-        '${ApiConfig.getScoredChampionshipMatches}?category_id=$categoryId');
-    final response =
-        await http.get(url).timeout(const Duration(seconds: 10));
-    if (response.statusCode != 200) return {};
-    final List<dynamic> data = json.decode(response.body);
-    final Map<int, String> result = {};
-    for (final j in data) {
-      final mid = int.tryParse(j['match_id'].toString()) ?? 0;
-      final bt  = j['bracket_type']?.toString() ?? '';
-      if (mid != 0) result[mid] = bt;
+        '${ApiConfig.getScoredMatches}?category_id=$categoryId');
+    try {
+      final response =
+          await http.get(url).timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return {};
+      final List<dynamic> data = json.decode(response.body);
+      final Map<int, String> result = {};
+      for (final j in data) {
+        final bt  = j['bracket_type']?.toString() ?? '';
+        if (!champBracketTypes.contains(bt)) continue;
+        final mid = int.tryParse(j['match_id'].toString()) ?? 0;
+        if (mid != 0) result[mid] = bt;
+      }
+      return result;
+    } catch (_) {
+      return {};
     }
-    return result;
   }
 
   static Future<Map<int, _MatchScore>> fetchMatchScores(
@@ -571,6 +584,9 @@ class _ChampionshipScheduleScreenState
   Map<int, String>      _scoredMatchInfo = {};
   Map<int, _MatchScore> _matchScores     = {};
 
+  // ── Active toast overlay (so it can be dismissed early) ───────────
+  OverlayEntry? _activeToastEntry;
+
   List<String> get _rounds => _roundsForMode(_mode);
   List<_ChampMatch> get _allMatches =>
       _matchesByRound.values.expand((l) => l).toList();
@@ -586,6 +602,9 @@ class _ChampionshipScheduleScreenState
   @override
   void dispose() {
     _tabController.dispose();
+    if (_activeToastEntry != null && _activeToastEntry!.mounted) {
+      _activeToastEntry!.remove();
+    }
     super.dispose();
   }
 
@@ -707,6 +726,12 @@ class _ChampionshipScheduleScreenState
     // the scoring page is open (matches qualification_sched behaviour).
     final messenger = ScaffoldMessenger.of(context);
     messenger.hideCurrentSnackBar();
+
+    // Dismiss any active stacked overlay toast immediately.
+    if (_activeToastEntry != null && _activeToastEntry!.mounted) {
+      _activeToastEntry!.remove();
+      _activeToastEntry = null;
+    }
 
     final submitted = await Navigator.push<bool>(
         context,
@@ -942,9 +967,11 @@ class _ChampionshipScheduleScreenState
       ),
     );
 
+    _activeToastEntry = entry;
     overlay.insert(entry);
     Future.delayed(const Duration(seconds: 4), () {
       if (entry.mounted) entry.remove();
+      if (_activeToastEntry == entry) _activeToastEntry = null;
     });
   }
 

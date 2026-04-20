@@ -1306,12 +1306,14 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                     const SizedBox(width: 10),
                     Container(
                       width: 72, height: 56,
-                                    decoration: BoxDecoration(
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.25),
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: Colors.white38, width: 1.5),
                       ),
                       child: Text(tempMinutes.toString().padLeft(2, '0'),
+                          textAlign: TextAlign.center,
                           style: const TextStyle(color: Colors.white,
                               fontSize: 32, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
                     ),
@@ -1345,12 +1347,14 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                     const SizedBox(width: 10),
                     Container(
                       width: 72, height: 56,
-                                    decoration: BoxDecoration(
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.25),
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: Colors.white38, width: 1.5),
                       ),
                       child: Text(tempSeconds.toString().padLeft(2, '0'),
+                          textAlign: TextAlign.center,
                           style: const TextStyle(color: Colors.white,
                               fontSize: 32, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
                     ),
@@ -1379,9 +1383,11 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                 child: Container(
                   width: double.infinity,
                   height: isSmall ? 40 : 46,
-                            decoration: BoxDecoration(
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
                       color: _confirmPurple, borderRadius: BorderRadius.circular(12)),
                   child: Text('CONFIRM',
+                      textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.white,
                           fontSize: isSmall ? 13 : 15, fontWeight: FontWeight.bold)),
                 ),
@@ -1748,12 +1754,14 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                                   onTap: () => Navigator.pop(ctx, false),
                                   child: Container(
                                     height: isSmall ? 38 : 44,
-                                                                decoration: BoxDecoration(
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
                                       color: Colors.white.withOpacity(0.12),
                                       borderRadius: BorderRadius.circular(12),
                                       border: Border.all(color: Colors.white30),
                                     ),
                                     child: Text('CANCEL',
+                                        textAlign: TextAlign.center,
                                         style: TextStyle(color: Colors.white,
                                             fontSize: isSmall ? 12 : 13,
                                             fontWeight: FontWeight.bold)),
@@ -1766,11 +1774,13 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
                                   onTap: () => Navigator.pop(ctx, true),
                                   child: Container(
                                     height: isSmall ? 38 : 44,
-                                                                decoration: BoxDecoration(
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
                                       color: _swapGold,
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Text('SWAP',
+                                        textAlign: TextAlign.center,
                                         style: TextStyle(color: Colors.white,
                                             fontSize: isSmall ? 12 : 13,
                                             fontWeight: FontWeight.bold)),

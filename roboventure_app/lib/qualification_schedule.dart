@@ -378,6 +378,9 @@ class _QualificationScheduleScreenState
   bool                              _standingsExpanded = false;
   Timer?                            _standingsTimer;
 
+  // ── Active toast overlay (so it can be dismissed early) ───────────
+  OverlayEntry? _activeToastEntry;
+
   bool get _soccer => _isSoccer(widget.competitionTitle);
 
   @override
@@ -399,6 +402,9 @@ class _QualificationScheduleScreenState
   void dispose() {
     _standingsTimer?.cancel();
     _tabController?.dispose();
+    if (_activeToastEntry != null && _activeToastEntry!.mounted) {
+      _activeToastEntry!.remove();
+    }
     super.dispose();
   }
 
@@ -490,6 +496,12 @@ class _QualificationScheduleScreenState
     final messenger = ScaffoldMessenger.of(context);
     final overlay   = Overlay.of(context);
     messenger.hideCurrentSnackBar();
+
+    // Dismiss any active stacked overlay toast immediately.
+    if (_activeToastEntry != null && _activeToastEntry!.mounted) {
+      _activeToastEntry!.remove();
+      _activeToastEntry = null;
+    }
 
     final bool? submitted = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) {
       if (widget.competitionTitle.toLowerCase().contains('emerging innovators')) {
@@ -682,9 +694,11 @@ class _QualificationScheduleScreenState
       ),
     );
 
+    _activeToastEntry = entry;
     overlay.insert(entry);
     Future.delayed(const Duration(seconds: 4), () {
       if (entry.mounted) entry.remove();
+      if (_activeToastEntry == entry) _activeToastEntry = null;
     });
   }
 
