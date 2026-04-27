@@ -125,10 +125,87 @@ if ($update->affected_rows < 1) {
     exit();
 }
 $update->close();
+
+// ── Check if all shootouts for this category are now resolved ─────────
+// If so, fire advance_knockout.php to attempt the draw. We pass the
+// highest scored group match_id as the trigger — same pattern as
+// championship_schedule.dart's reRunGroupDraw.
+$allDoneStmt = $conn->prepare("
+    SELECT COUNT(*) AS pending
+    FROM   tbl_soccer_tiebreaker
+    WHERE  category_id = ?
+      AND  winner_id   IS NULL
+");
+// We need category_id — fetch it from the tiebreaker row we just scored
+$catStmt = $conn->prepare("
+    SELECT category_id FROM tbl_soccer_tiebreaker WHERE tiebreaker_id = ?
+");
+$catStmt->bind_param('i', $tiebreaker_id);
+$catStmt->execute();
+$catRow  = $catStmt->get_result()->fetch_assoc();
+$catStmt->close();
+$tiebreakerCategoryId = intval($catRow['category_id'] ?? 0);
+
+$pendingStmt = $conn->prepare("
+    SELECT COUNT(*) AS pending
+    FROM   tbl_soccer_tiebreaker
+    WHERE  category_id = ?
+      AND  winner_id   IS NULL
+");
+$pendingStmt->bind_param('i', $tiebreakerCategoryId);
+$pendingStmt->execute();
+$pendingRow = $pendingStmt->get_result()->fetch_assoc();
+$pendingStmt->close();
+
+$allShootoutsDone = (intval($pendingRow['pending'] ?? 1) === 0);
+
+// ── If all shootouts resolved, trigger advance_knockout with last scored group match ─
+$drawTriggered = false;
+if ($allShootoutsDone && $tiebreakerCategoryId > 0) {
+    // Find highest scored group match_id for this category
+    $trigStmt = $conn->prepare("
+        SELECT MAX(sc.match_id) AS last_match_id
+        FROM   tbl_score sc
+        INNER  JOIN tbl_match m ON m.match_id = sc.match_id
+        INNER  JOIN tbl_teamschedule ts ON ts.match_id = sc.match_id
+        INNER  JOIN tbl_team t ON t.team_id = ts.team_id
+        WHERE  m.bracket_type = 'group'
+          AND  t.category_id  = ?
+    ");
+    $trigStmt->bind_param('i', $tiebreakerCategoryId);
+    $trigStmt->execute();
+    $trigRow = $trigStmt->get_result()->fetch_assoc();
+    $trigStmt->close();
+
+    $triggerMatchId = intval($trigRow['last_match_id'] ?? 0);
+    if ($triggerMatchId > 0) {
+        $advancePayload = json_encode([
+            'match_id'       => $triggerMatchId,
+            'winner_team_id' => 0,
+            'loser_team_id'  => 0,
+            'category_id'    => $tiebreakerCategoryId,
+        ]);
+        // Internal HTTP call to advance_knockout.php on same server
+        $advUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http')
+                . '://' . $_SERVER['HTTP_HOST']
+                . dirname($_SERVER['SCRIPT_NAME']) . '/advance_knockout.php';
+        $ch = curl_init($advUrl);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $advancePayload);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_exec($ch);
+        $drawTriggered = true;
+    }
+}
+
 $conn->close();
 
 echo json_encode([
-    'success'   => true,
-    'winner_id' => $winner_id,
+    'success'       => true,
+    'winner_id'     => $winner_id,
+    'all_shootouts_done' => $allShootoutsDone,
+    'draw_triggered'     => $drawTriggered,
 ]);
 ?>

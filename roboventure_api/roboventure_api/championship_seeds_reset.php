@@ -1,11 +1,12 @@
 <?php
 // cleanup_championship_seeds.php
 //
-// DELETE { team_ids: [id, id], category_id }
-//   Removes those teams from any UNSCORED knockout tbl_teamschedule slots.
-//   Called by qualification_sched.dart before re-seeding after a re-score,
-//   so the old winner's slot is cleared before the new winner is inserted.
-//   Only removes from unscored matches — scored knockout slots are kept.
+// DELETE { team_ids: [id, id], category_id, match_id }
+//   Removes those teams from the specified UNSCORED knockout match slot only.
+//   match_id MUST be supplied — scoping to the specific match prevents the
+//   delete from wiping the same teams out of other concurrent unscored slots
+//   (e.g. the other semi-final), which would corrupt the bracket.
+//   Called by qualification_sched.dart before re-seeding after a re-score.
 //
 // POST { category_id }
 //   Removes seeds that are orphaned in pure knockout rounds (round N):
@@ -38,15 +39,21 @@ if (!$data) {
 
 // ---------------------------------------------------------------------------
 // DELETE: remove knockout seeds for a list of team IDs
-// Body: { "team_ids": [12, 9], "category_id": 4 }
+// Body: { "team_ids": [12, 9], "category_id": 4, "match_id": 252 }
+//
+// IMPORTANT: match_id must be supplied so the delete is scoped to that
+// specific match only. Without it the query would wipe the same teams
+// from every other unscored knockout slot (e.g. the other SF), which
+// corrupts the bracket.
 // ---------------------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'DELETE') {
     $category_id = intval($data['category_id'] ?? 0);
+    $match_id    = intval($data['match_id']    ?? 0);
     $raw_ids     = $data['team_ids'] ?? [];
 
-    if ($category_id <= 0 || !is_array($raw_ids) || count($raw_ids) === 0) {
+    if ($category_id <= 0 || $match_id <= 0 || !is_array($raw_ids) || count($raw_ids) === 0) {
         http_response_code(400);
-        echo json_encode(['error' => 'category_id and team_ids[] are required']);
+        echo json_encode(['error' => 'category_id, match_id, and team_ids[] are required']);
         exit();
     }
 
@@ -62,10 +69,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'DELETE') {
     $removedList  = [];
 
     foreach ($team_ids as $team_id) {
+        // Scoped to the SPECIFIC match_id — never touches other slots.
         $del = $conn->prepare("
             DELETE ts FROM tbl_teamschedule ts
             INNER JOIN tbl_match m ON m.match_id = ts.match_id
-            WHERE ts.team_id = ?
+            WHERE ts.team_id  = ?
+              AND ts.match_id = ?
               AND m.bracket_type IN (
                   'elimination','round-of-32','round-of-16','round-of-8',
                   'quarter-finals','semi-finals','third-place','final'
@@ -74,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'DELETE') {
                   SELECT 1 FROM tbl_score sc WHERE sc.match_id = ts.match_id
               )
         ");
-        $del->bind_param('i', $team_id);
+        $del->bind_param('ii', $team_id, $match_id);
         $del->execute();
         $rows = $del->affected_rows;
         $del->close();
@@ -96,6 +105,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'DELETE') {
 // ---------------------------------------------------------------------------
 // POST: remove orphaned seeds in pure knockout rounds
 // Body: { "category_id": 4 }
+//
+// Special mode — Body: { "category_id": 4, "force_clear": true }
+//   Wipes ALL knockout seeds for the category unconditionally.
+//   Called by Flutter when penalty shootouts are still pending so any
+//   prematurely written seeds are removed and the bracket shows TBD.
+//   Once all shootouts resolve, reRunGroupDraw re-seeds correctly.
 // ---------------------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $category_id = intval($data['category_id'] ?? 0);
@@ -103,6 +118,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($category_id <= 0) {
         http_response_code(400);
         echo json_encode(['error' => 'category_id is required']);
+        exit();
+    }
+
+    // ── Force-clear: wipe ALL knockout seeds while shootouts are pending ────
+    if (!empty($data['force_clear'])) {
+        $del = $conn->prepare("
+            DELETE ts FROM tbl_teamschedule ts
+            INNER JOIN tbl_match m ON m.match_id = ts.match_id
+            INNER JOIN tbl_team  t ON t.team_id  = ts.team_id
+            WHERE t.category_id = ?
+              AND m.bracket_type IN (
+                  'elimination','round-of-32','round-of-16','round-of-8',
+                  'quarter-finals','semi-finals','third-place','final'
+              )
+        ");
+        $del->bind_param('i', $category_id);
+        $del->execute();
+        $rows = $del->affected_rows;
+        $del->close();
+        $conn->close();
+
+        echo json_encode([
+            'success'      => true,
+            'force_clear'  => true,
+            'rows_removed' => $rows,
+        ]);
         exit();
     }
 

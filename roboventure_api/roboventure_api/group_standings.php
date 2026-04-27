@@ -164,7 +164,28 @@ function computeH2H(array $subsetIds, array $matchScores): array {
     return $h2h;
 }
 
-// ── 6. Build output grouped and sorted ────────────────────────────────
+// ── 6. Load all resolved Penalty Shootout results for this category ───
+// shootoutWins[team_id] = number of shootout wins across all resolved
+// tbl_soccer_tiebreaker rows for this category.
+// Used as step 7 in the sort — more shootout wins = higher rank when
+// all other tiebreakers are exhausted.
+$shootoutWins = [];
+$tbStmt = $conn->prepare("
+    SELECT winner_id
+    FROM   tbl_soccer_tiebreaker
+    WHERE  category_id = ?
+      AND  winner_id  IS NOT NULL
+");
+$tbStmt->bind_param('i', $category_id);
+$tbStmt->execute();
+$tbRes = $tbStmt->get_result();
+$tbStmt->close();
+while ($r = $tbRes->fetch_assoc()) {
+    $wid = intval($r['winner_id']);
+    $shootoutWins[$wid] = ($shootoutWins[$wid] ?? 0) + 1;
+}
+
+// ── 7. Build output grouped and sorted ────────────────────────────────
 $output = [];
 foreach ($groups as $label => $teamIds) {
     $rows = [];
@@ -172,24 +193,26 @@ foreach ($groups as $label => $teamIds) {
         $s  = $stats[$tid];
         $gd = $s['gf'] - $s['ga'];
         $rows[] = [
-            'group_label' => $label,
-            'team_id'     => $tid,
-            'team_name'   => $teamInfo[$tid]['team_name'],
-            'mp'          => $s['mp'],
-            'w'           => $s['w'],
-            'd'           => $s['d'],
-            'l'           => $s['l'],
-            'gf'          => $s['gf'],
-            'ga'          => $s['ga'],
-            'gd'          => $gd,
-            'pts'         => $s['pts'],
+            'group_label'    => $label,
+            'team_id'        => $tid,
+            'team_name'      => $teamInfo[$tid]['team_name'],
+            'mp'             => $s['mp'],
+            'w'              => $s['w'],
+            'd'              => $s['d'],
+            'l'              => $s['l'],
+            'gf'             => $s['gf'],
+            'ga'             => $s['ga'],
+            'gd'             => $gd,
+            'pts'            => $s['pts'],
+            'shootout_wins'  => $shootoutWins[$tid] ?? 0,
         ];
     }
 
     // ── FIFA tiebreaker sort ──────────────────────────────────────────
     // Steps 1–3: overall PTS → GD → GF
     // Steps 4–6: H2H PTS → H2H GD → H2H GF (among tied teams only)
-    // Step  7:   Alphabetical (deterministic fallback)
+    // Step  7:   Penalty Shootout wins (Round Robin wins count)
+    // Step  8:   Alphabetical (deterministic fallback)
     usort($rows, function($a, $b) use ($matchScores) {
         // 1. Overall points
         if ($b['pts'] !== $a['pts']) return $b['pts'] - $a['pts'];
@@ -214,7 +237,12 @@ foreach ($groups as $label => $teamIds) {
         if ($h2h[$b['team_id']]['gf'] !== $h2h[$a['team_id']]['gf'])
             return $h2h[$b['team_id']]['gf'] - $h2h[$a['team_id']]['gf'];
 
-        // 7. Alphabetical (replaces drawing of lots)
+        // 7. Penalty Shootout wins (Round Robin)
+        $aWins = $a['shootout_wins'];
+        $bWins = $b['shootout_wins'];
+        if ($bWins !== $aWins) return $bWins - $aWins;
+
+        // 8. Alphabetical (replaces drawing of lots)
         return strcmp($a['team_name'], $b['team_name']);
     });
 

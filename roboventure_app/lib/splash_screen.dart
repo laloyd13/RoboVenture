@@ -249,7 +249,7 @@ class _LoadingScreenState extends State<LoadingScreen>
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Powered by CREOTEC',
+                      'Powered by Creotec Philippines Inc.',
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.55),
                         fontSize: 10,

@@ -597,7 +597,7 @@ class _QualificationScheduleScreenState
 
     if (submitted == true) {
       messenger.showSnackBar(SnackBar(
-        content: const Text('⚽ Penalty Shootout result saved!'),
+        content: const Text('Penalty Shootout result saved!'),
         backgroundColor: const Color(0xFF8B0000),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -1655,18 +1655,33 @@ class _SoccerMatchTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final totalCount = rows.length + tiebreakers.length;
+    // Build a unified list: unscored items (regular + PS) first, then scored items.
+    // This ensures Penalty Shootout cards also obey the unscored-above-scored rule.
+    final List<dynamic> unscored = [];
+    final List<dynamic> scored   = [];
+
+    for (final row in rows) {
+      (row.isScored ? scored : unscored).add(row);
+    }
+    for (final tb in tiebreakers) {
+      (tb.isScored ? scored : unscored).add(tb);
+    }
+
+    final unified = [...unscored, ...scored];
+
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      itemCount: totalCount,
+      itemCount: unified.length,
       itemBuilder: (_, i) {
-        // Regular matches first, tiebreaker cards appended at the bottom
-        if (i < rows.length) return _buildRow(rows[i], i);
-        final tb = tiebreakers[i - rows.length];
+        final item = unified[i];
+        if (item is _SoccerMatchRow) {
+          return _buildRow(item, i);
+        }
+        final tb = item as TiebreakerMatch;
         return _PenaltyShootoutCard(
-          match:   tb,
-          onTap:   tb.isScored ? null : () => onTapTiebreaker(tb),
+          match: tb,
+          onTap: tb.isScored ? null : () => onTapTiebreaker(tb),
         );
       },
     );

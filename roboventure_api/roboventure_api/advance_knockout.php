@@ -232,7 +232,7 @@ if ($currentType === 'group') {
     // ── A4. All matches done — calculate standings via shared helper ─────
     // computeGroupStandings() replicates get_group_standings.php logic
     // in-process. No tbl_group_results table required.
-    $rows = computeGroupStandings($conn, $groupTeamIds, $scoredMatches);
+    $rows = computeGroupStandings($conn, $groupTeamIds, $scoredMatches, $category_id);
 
     $rank1TeamId = $rows[0]['team_id'];
     $rank2TeamId = $rows[1]['team_id'];
@@ -332,6 +332,36 @@ if ($currentType === 'group') {
         exit();
     }
 
+    // ── A5b. Block draw if any Penalty Shootout is still unresolved ──────
+    // tbl_soccer_tiebreaker rows with winner_id IS NULL mean a tiebreaker
+    // match is scheduled but not yet scored. The draw MUST NOT run until
+    // every shootout has a winner — otherwise tied teams get seeded using
+    // alphabetical fallback instead of the actual shootout result.
+    $tbPendingStmt = $conn->prepare("
+        SELECT COUNT(*) AS cnt
+        FROM   tbl_soccer_tiebreaker
+        WHERE  category_id = ?
+          AND  winner_id   IS NULL
+    ");
+    $tbPendingStmt->bind_param('i', $category_id);
+    $tbPendingStmt->execute();
+    $tbPendingRow = $tbPendingStmt->get_result()->fetch_assoc();
+    $tbPendingStmt->close();
+
+    $pendingShootouts = intval($tbPendingRow['cnt'] ?? 0);
+    if ($pendingShootouts > 0) {
+        echo json_encode([
+            'success'              => true,
+            'status'               => 'waiting_for_penalty_shootouts',
+            'group_label'          => $groupLabel,
+            'groups_complete'      => $doneGroups,
+            'groups_total'         => $totalGroups,
+            'pending_shootouts'    => $pendingShootouts,
+            'message'              => "All groups complete but $pendingShootouts Penalty Shootout(s) are still unresolved. Draw will run after all shootouts are scored.",
+        ]);
+        exit();
+    }
+
     // ── A6. ALL groups done — build groupResults live (no helper table) ─
     // For each group, run computeGroupStandings() to get rank-1 and rank-2.
     $groupResults = []; // $groupResults['A'][1] = team_id, [2] = team_id
@@ -390,7 +420,7 @@ if ($currentType === 'group') {
             $gScoredMatches[] = intval($sm['match_id']);
         }
 
-        $gRows = computeGroupStandings($conn, $gTeamIds, $gScoredMatches);
+        $gRows = computeGroupStandings($conn, $gTeamIds, $gScoredMatches, $category_id);
         $groupResults[$lbl][1] = $gRows[0]['team_id'] ?? null;
         $groupResults[$lbl][2] = $gRows[1]['team_id'] ?? null;
     }
@@ -519,7 +549,7 @@ if ($currentType === 'group') {
             $gScoredMatches2[] = intval($sm['match_id']);
         }
 
-        $gRows2 = computeGroupStandings($conn, $gTeamIds2, $gScoredMatches2);
+        $gRows2 = computeGroupStandings($conn, $gTeamIds2, $gScoredMatches2, $category_id);
 
         // Keep only top-2 from each group
         foreach (array_slice($gRows2, 0, 2) as $row) {
@@ -569,29 +599,108 @@ if ($currentType === 'group') {
 
     $drawMethod = "group_count_{$totalGroups}";
 
+    // ── Force-clear ALL unscored first-round knockout slots ──────────────
+    // The draw is always recomputed from scratch once all groups + all PS
+    // matches are resolved. Any seeds from a previous (possibly incorrect)
+    // draw run must be wiped before re-seeding so the right teams land in
+    // the right slots. Without this, seedIntoMatchTogether's Rule B
+    // ("skip fully-paired slots") permanently protects stale seeds.
+    //
+    // Only unscored slots are touched — matches that have already been
+    // played are never affected.
+    $firstRoundTypes = ['elimination', 'round-of-32', 'round-of-16', 'quarter-finals', 'semi-finals'];
+    foreach ($firstRoundTypes as $frt) {
+        $wipeStmt = $conn->prepare("
+            DELETE ts
+            FROM   tbl_teamschedule ts
+            INNER  JOIN tbl_match m ON m.match_id = ts.match_id
+            WHERE  m.bracket_type = ?
+              AND  NOT EXISTS (
+                  SELECT 1 FROM tbl_score sc WHERE sc.match_id = ts.match_id
+              )
+        ");
+        $wipeStmt->bind_param('s', $frt);
+        $wipeStmt->execute();
+        $wipedRows = $wipeStmt->affected_rows;
+        $wipeStmt->close();
+        if ($wipedRows > 0) {
+            $seedingLog['slots_cleared'][$frt] = $wipedRows;
+        }
+    }
+
     if ($totalGroups === 2) {
         // ══════════════════════════════════════════════════════════════
         // 2 GROUPS → 4 TEAMS:  SF → Final/3rd
-        // Seeds: 1–4
-        //   SF1: Seed 1 vs Seed 4
-        //   SF2: Seed 2 vs Seed 3
+        //
+        // FIFA group-pair cross-seeding (NOT overall ranking):
+        //   Match 1: Grp A Rank 1  vs  Grp B Rank 2 (or PS winner)
+        //   Match 2: Grp B Rank 1  vs  Grp A Rank 2 (or PS winner)
+        //
+        // If a Penalty Shootout was played between two Rank-2 candidates
+        // in a group, the PS WINNER replaces the standings-based Rank 2
+        // for that group's draw slot.
         // ══════════════════════════════════════════════════════════════
         $sfType = 'semi-finals';
 
-        $s1 = $overallSeeds[1] ?? null;
-        $s2 = $overallSeeds[2] ?? null;
-        $s3 = $overallSeeds[3] ?? null;
-        $s4 = $overallSeeds[4] ?? null;
+        $grpA = $sortedLabels[0];
+        $grpB = $sortedLabels[1];
 
-        // SF1: Seed 1 vs Seed 4
-        if ($s1 && $s4) {
-            $r = seedIntoMatchTogether($conn, $sfType, $s1, $s4, $referee_id, $category_id);
-            $seedingLog['sf_matches'][] = ['match' => 'SF1: Seed 1 vs Seed 4', 'home' => $s1, 'away' => $s4, 'result' => $r];
+        $a1 = $groupResults[$grpA][1] ?? null; // Grp A Rank 1
+        $a2 = $groupResults[$grpA][2] ?? null; // Grp A Rank 2
+        $b1 = $groupResults[$grpB][1] ?? null; // Grp B Rank 1
+        $b2 = $groupResults[$grpB][2] ?? null; // Grp B Rank 2
+
+        // ── Override away slot with PS top winner (most wins) ──────────────
+        // A group may have multiple PS matches (e.g. round-robin tiebreaker).
+        // Count wins per team per group and pick the team with the MOST wins.
+        // That team fills the away slot in the opposing group's knockout match.
+        $psStmt = $conn->prepare("
+            SELECT group_label, winner_id, COUNT(*) AS win_count
+            FROM   tbl_soccer_tiebreaker
+            WHERE  category_id = ?
+              AND  winner_id   IS NOT NULL
+            GROUP  BY group_label, winner_id
+            ORDER  BY group_label ASC, win_count DESC, winner_id ASC
+        ");
+        $psStmt->bind_param('i', $category_id);
+        $psStmt->execute();
+        $psRes = $psStmt->get_result();
+        $psStmt->close();
+
+        // Keep only the FIRST row per group = highest win_count (ORDER BY win_count DESC).
+        $psWinnerByGroup = [];
+        while ($psRow = $psRes->fetch_assoc()) {
+            $lbl = $psRow['group_label'];
+            if (!isset($psWinnerByGroup[$lbl])) {
+                $psWinnerByGroup[$lbl] = intval($psRow['winner_id']);
+                $seedingLog['ps_win_counts'][] = [
+                    'group'     => $lbl,
+                    'winner_id' => intval($psRow['winner_id']),
+                    'win_count' => intval($psRow['win_count']),
+                ];
+            }
         }
-        // SF2: Seed 2 vs Seed 3
-        if ($s2 && $s3) {
-            $r = seedIntoMatchTogether($conn, $sfType, $s2, $s3, $referee_id, $category_id);
-            $seedingLog['sf_matches'][] = ['match' => 'SF2: Seed 2 vs Seed 3', 'home' => $s2, 'away' => $s3, 'result' => $r];
+
+        // PS top winner always fills the away slot in the opposing match —
+        // unconditionally, even if the PS winner is also the standings Rank 1.
+        if (isset($psWinnerByGroup[$grpA])) {
+            $a2 = $psWinnerByGroup[$grpA];
+            $seedingLog['ps_overrides'][] = "Grp {$grpA} away slot set to PS top winner team_id=$a2";
+        }
+        if (isset($psWinnerByGroup[$grpB])) {
+            $b2 = $psWinnerByGroup[$grpB];
+            $seedingLog['ps_overrides'][] = "Grp {$grpB} away slot set to PS top winner team_id=$b2";
+        }
+
+        // Match 1: Grp A Rank 1 vs Grp B PS top winner (or standings Rank 2)
+        if ($a1 && $b2) {
+            $r = seedIntoMatchTogether($conn, $sfType, $a1, $b2, $referee_id, $category_id);
+            $seedingLog['sf_matches'][] = ['match' => "Match 1: Grp {$grpA} Rank1 vs Grp {$grpB} PS winner/Rank2", 'home' => $a1, 'away' => $b2, 'result' => $r];
+        }
+        // Match 2: Grp B Rank 1 vs Grp A PS top winner (or standings Rank 2)
+        if ($b1 && $a2) {
+            $r = seedIntoMatchTogether($conn, $sfType, $b1, $a2, $referee_id, $category_id);
+            $seedingLog['sf_matches'][] = ['match' => "Match 2: Grp {$grpB} Rank1 vs Grp {$grpA} PS winner/Rank2", 'home' => $b1, 'away' => $a2, 'result' => $r];
         }
 
     } elseif ($totalGroups === 3) {
@@ -1491,14 +1600,16 @@ function rankAndSeedTeams(array $teams): array
 //   4. Points in head-to-head matches among tied teams
 //   5. Goal difference in head-to-head matches among tied teams
 //   6. Goals for in head-to-head matches among tied teams
-//   7. Team name alphabetical (final fallback — replaces drawing of lots)
+//   7. Penalty Shootout winner override (from tbl_soccer_tiebreaker)
+//   8. Team name alphabetical (final fallback — replaces drawing of lots)
 //
 // $teamIds        — array of team_id ints in this group
 // $scoredMatchIds — array of match_id ints that are fully scored
+// $categoryId     — used to look up shootout results for step 7
 //
-// Returns rows sorted by FIFA rules.
+// Returns rows sorted by FIFA rules + shootout override.
 // Each row: [ team_id, team_name, pts, gd, gf, ga, mp, w, d, l ]
-function computeGroupStandings(mysqli $conn, array $teamIds, array $scoredMatchIds): array {
+function computeGroupStandings(mysqli $conn, array $teamIds, array $scoredMatchIds, int $categoryId = 0): array {
     if (empty($teamIds)) return [];
 
     $n = count($teamIds);
@@ -1585,8 +1696,43 @@ function computeGroupStandings(mysqli $conn, array $teamIds, array $scoredMatchI
         ];
     }
 
-    // ── FIFA sort: overall PTS → GD → GF, then head-to-head for ties ─
-    usort($rows, function ($a, $b) use ($matchScores, $teamIds) {
+    // ── Step 7: Load all resolved shootout results for this group ────
+    // Build a "shootout rank" map: winner_id beats loser_id → winner
+    // ranks higher when they are otherwise tied. This is computed using
+    // the Round Robin wins count among all shootout results for the
+    // exact set of tied teams.
+    //
+    // shootoutWins[team_id] = number of shootout wins among all
+    // tbl_soccer_tiebreaker rows for this category where both
+    // team1_id and team2_id are within $teamIds.
+    $shootoutWins = array_fill_keys($teamIds, 0);
+    if ($categoryId > 0) {
+        $tbPh = implode(',', array_fill(0, $n, '?'));
+        $tbTypes = str_repeat('i', $n * 2 + 1);
+        $tbStmt = $conn->prepare("
+            SELECT winner_id
+            FROM   tbl_soccer_tiebreaker
+            WHERE  category_id = ?
+              AND  winner_id  IS NOT NULL
+              AND  team1_id   IN ($tbPh)
+              AND  team2_id   IN ($tbPh)
+        ");
+        $tbArgs = array_merge([$categoryId], $teamIds, $teamIds);
+        $tbStmt->bind_param($tbTypes, ...$tbArgs);
+        $tbStmt->execute();
+        $tbRes = $tbStmt->get_result();
+        $tbStmt->close();
+
+        while ($r = $tbRes->fetch_assoc()) {
+            $wid = intval($r['winner_id']);
+            if (isset($shootoutWins[$wid])) {
+                $shootoutWins[$wid]++;
+            }
+        }
+    }
+
+    // ── FIFA sort: overall PTS → GD → GF, then H2H, then shootout wins ─
+    usort($rows, function ($a, $b) use ($matchScores, $teamIds, $shootoutWins) {
         // 1. Overall points
         if ($b['pts'] !== $a['pts']) return $b['pts'] - $a['pts'];
         // 2. Overall goal difference
@@ -1595,7 +1741,6 @@ function computeGroupStandings(mysqli $conn, array $teamIds, array $scoredMatchI
         if ($b['gf']  !== $a['gf'])  return $b['gf']  - $a['gf'];
 
         // ── Steps 4-6: head-to-head among teams still level ──────────
-        // Compute H2H stats only between these two teams.
         $h2h = computeH2HStats([$a['team_id'], $b['team_id']], $matchScores);
 
         $aPts = $h2h[$a['team_id']]['pts'];
@@ -1612,7 +1757,12 @@ function computeGroupStandings(mysqli $conn, array $teamIds, array $scoredMatchI
         if ($h2h[$b['team_id']]['gf'] !== $h2h[$a['team_id']]['gf'])
             return $h2h[$b['team_id']]['gf'] - $h2h[$a['team_id']]['gf'];
 
-        // 7. Alphabetical (replaces drawing of lots)
+        // 7. Penalty Shootout wins (Round Robin — more wins = higher rank)
+        $aWins = $shootoutWins[$a['team_id']] ?? 0;
+        $bWins = $shootoutWins[$b['team_id']] ?? 0;
+        if ($bWins !== $aWins) return $bWins - $aWins;
+
+        // 8. Alphabetical (final fallback — replaces drawing of lots)
         return strcmp($a['team_name'], $b['team_name']);
     });
 

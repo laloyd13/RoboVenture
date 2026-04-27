@@ -15,7 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 $host = "localhost";
 $user = "root"; 
 $pass = "";
-$dbname = "rb_ps_db";
+$dbname = "roboventuredb";
 
 try {
     $conn = new mysqli($host, $user, $pass, $dbname);

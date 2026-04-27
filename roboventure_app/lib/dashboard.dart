@@ -221,7 +221,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const Spacer(),
           CircleAvatar(
             backgroundColor: Colors.white.withOpacity(0.2),
-            child: const Icon(Icons.person, color: Colors.white),
+            child: const Icon(Icons.stadium_outlined, color: Colors.white),
           ),
         ],
       ),

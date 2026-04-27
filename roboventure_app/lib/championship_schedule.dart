@@ -236,31 +236,110 @@ class _ChampApiService {
     }
   }
 
+  /// Returns true if any Penalty Shootout for this category is still
+  /// unresolved (is_scored == false OR winner_id IS NULL).
+  /// Used to gate both cleanup and draw so premature seeds are never written
+  /// — or are actively wiped — while shootouts are outstanding.
+  static Future<bool> hasPendingShootouts(int categoryId) async {
+    try {
+      final tbUrl = Uri.parse(
+          '${ApiConfig.getTiebreaker}?category_id=$categoryId');
+      final tbResp = await http.get(tbUrl).timeout(const Duration(seconds: 10));
+      if (tbResp.statusCode == 200) {
+        final List<dynamic> tbData = json.decode(tbResp.body);
+        return tbData.any((j) =>
+            j['is_scored'] == false || j['winner_id'] == null);
+      }
+    } catch (e) {
+      debugPrint('[hasPendingShootouts] error: $e');
+    }
+    return false; // assume safe if check fails
+  }
+
+  /// Wipes ALL championship team seeds for this category by calling
+  /// cleanup_champ_seeds.php with force_clear=true.
+  /// Called when shootouts are still pending so the bracket shows blank
+  /// (TBD) instead of teams that were seeded prematurely.
+  ///
+  /// ⚠️  Requires cleanup_champ_seeds.php to handle force_clear:
+  ///     if (!empty($data['force_clear'])) {
+  ///         DELETE FROM tbl_teamschedule
+  ///         WHERE category_id = ? AND bracket_type != 'group'
+  ///     }
+  static Future<void> clearAllChampionshipSeeds(int categoryId) async {
+    try {
+      await http.post(
+        Uri.parse(ApiConfig.cleanupChampionshipSeeds),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'category_id': categoryId,
+          'force_clear': true,
+        }),
+      ).timeout(const Duration(seconds: 10));
+      debugPrint('[champ] clearAllChampionshipSeeds done for category=$categoryId');
+    } catch (e) {
+      debugPrint('[champ] clearAllChampionshipSeeds error: $e');
+    }
+  }
+
   /// Silently re-triggers advance_knockout.php for the last scored match
   /// of every fully-completed group.  Called on every load/refresh so the
   /// bracket always reflects the current advance_knockout logic, even when
   /// group scores already existed before a server-side PHP update.
   ///
+  /// Will NOT trigger if any Penalty Shootout for this category is still
+  /// unresolved (winner_id IS NULL) — the draw must wait until all
+  /// shootouts are scored.
+  ///
   /// Fire-and-forget: errors are swallowed so they never block the UI.
   static Future<void> reRunGroupDraw(int categoryId) async {
     try {
-      // Step 1 — fetch all group match IDs that are fully scored
-      // We use the existing getScoredMatches endpoint which returns
-      // bracket_type per match; filter to 'group' only.
+      // ── Step 0: Check for pending Penalty Shootouts ──────────────────
+      // If any shootout is unresolved, do NOT trigger the draw.
+      // save_tiebreaker_score.php will auto-trigger it once all are done.
+      final tbUrl = Uri.parse(
+          '${ApiConfig.getTiebreaker}?category_id=$categoryId');
+      final tbResp = await http.get(tbUrl).timeout(const Duration(seconds: 10));
+      if (tbResp.statusCode == 200) {
+        final List<dynamic> tbData = json.decode(tbResp.body);
+        final bool hasPendingShootout = tbData.any((j) =>
+            j['is_scored'] == false || j['winner_id'] == null);
+        if (hasPendingShootout) {
+          debugPrint('[reRunGroupDraw] Blocked — pending Penalty Shootout(s) detected.');
+          return;
+        }
+      }
+
+      // ── Step 1 — fetch all scored match IDs (group + knockout) ─────────
+      // If ANY knockout match is already scored, the group draw is done and
+      // re-running it would wipe unscored knockout slots (e.g. SF2) and
+      // re-seed them from group standings, corrupting the bracket.
       final url = Uri.parse(
-          '${ApiConfig.getScoredMatches}?category_id=$categoryId&bracket_type=group');
+          '${ApiConfig.getScoredMatches}?category_id=$categoryId');
       final resp = await http.get(url).timeout(const Duration(seconds: 10));
       if (resp.statusCode != 200) return;
 
       final List<dynamic> data = json.decode(resp.body);
 
-      // Collect the highest (last) scored match_id per group by grouping
-      // on team membership — we just need any one fully-scored group match
-      // to hand to advance_knockout.php, which will then check ALL groups
-      // internally and run the draw when they are all complete.
-      //
-      // Simplest approach: collect all scored group match IDs, sort desc,
-      // and fire advance_knockout for the last one. PHP handles the rest.
+      const knockoutBracketTypes = {
+        'elimination', 'round-of-32', 'round-of-16', 'round-of-8',
+        'quarter-finals', 'semi-finals', 'third-place', 'final',
+      };
+
+      final bool anyKnockoutScored = data.any((j) {
+        final bt = j['bracket_type']?.toString() ?? '';
+        return knockoutBracketTypes.contains(bt);
+      });
+
+      if (anyKnockoutScored) {
+        // Knockout play has already started — the group draw must not be
+        // re-run. Doing so would force-clear unscored knockout slots and
+        // re-seed them from group standings, causing scored-match teams
+        // to appear in slots that belong to different matches.
+        debugPrint('[reRunGroupDraw] Blocked — knockout matches already scored.');
+        return;
+      }
+
       final Set<int> scoredGroupMatchIds = {};
       for (final j in data) {
         final bt  = j['bracket_type']?.toString() ?? '';
@@ -271,16 +350,15 @@ class _ChampApiService {
 
       if (scoredGroupMatchIds.isEmpty) return;
 
-      // Use the highest match_id — it is most likely the last group match
-      // scored, so advance_knockout will see all groups complete.
+      // Use the highest match_id — most likely the last group match scored
       final triggerMatchId =
           scoredGroupMatchIds.reduce((a, b) => a > b ? a : b);
 
       final advanceUrl = Uri.parse(ApiConfig.advanceKnockout);
       final body = json.encode({
         'match_id':       triggerMatchId,
-        'winner_team_id': 0,  // ignored for group bracket_type
-        'loser_team_id':  0,  // ignored for group bracket_type
+        'winner_team_id': 0,
+        'loser_team_id':  0,
         'category_id':    categoryId,
       });
 
@@ -293,7 +371,6 @@ class _ChampApiService {
       debugPrint('[reRunGroupDraw] trigger=$triggerMatchId '
           'status=${advResp.statusCode} body=${advResp.body}');
     } catch (e) {
-      // Silent — never block load/refresh
       debugPrint('[reRunGroupDraw] suppressed error: $e');
     }
   }
@@ -674,15 +751,20 @@ class _ChampionshipScheduleScreenState
   Future<void> _loadBracket() async {
     setState(() { _loading = true; _error = null; });
     try {
-      // Always run cleanup on load so seeds orphaned by a direct DB score
-      // deletion (outside the app) are cleared when the screen is opened.
-      // cleanup_champ_seeds.php has a fast early-exit guard that makes
-      // this a near-instant no-op when nothing is stale.
-      await _ChampApiService.cleanupOrphanedSeeds(widget.categoryId);
+      // Check shootout state first — this single await drives both branches.
+      final shootoutsPending =
+          await _ChampApiService.hasPendingShootouts(widget.categoryId);
 
-      // Re-run the group draw silently so the bracket always reflects the
-      // current advance_knockout.php logic, even for pre-existing scores.
-      await _ChampApiService.reRunGroupDraw(widget.categoryId);
+      if (shootoutsPending) {
+        // Wipe any seeds that were written before shootouts were resolved
+        // so the bracket shows blank (TBD) while we wait.
+        debugPrint('[_loadBracket] Shootouts pending — wiping premature seeds.');
+        await _ChampApiService.clearAllChampionshipSeeds(widget.categoryId);
+      } else {
+        // Normal path: remove genuinely orphaned seeds, then re-seed.
+        await _ChampApiService.cleanupOrphanedSeeds(widget.categoryId);
+        await _ChampApiService.reRunGroupDraw(widget.categoryId);
+      }
 
       final groupCount =
           await _ChampApiService.fetchGroupCount(widget.categoryId);
@@ -735,13 +817,15 @@ class _ChampionshipScheduleScreenState
   // ── REFRESH ────────────────────────────────────────────────────────
   Future<void> _refreshData() async {
     try {
-      // Run cleanup on every refresh so seeds orphaned by a direct DB
-      // score deletion are cleared without needing a full re-open.
-      // The PHP guard makes this a no-op when nothing is stale.
-      await _ChampApiService.cleanupOrphanedSeeds(widget.categoryId);
-
-      // Re-run the group draw silently on every refresh/pulldown.
-      await _ChampApiService.reRunGroupDraw(widget.categoryId);
+      final shootoutsPending =
+          await _ChampApiService.hasPendingShootouts(widget.categoryId);
+      if (shootoutsPending) {
+        debugPrint('[_refreshData] Shootouts pending — wiping premature seeds.');
+        await _ChampApiService.clearAllChampionshipSeeds(widget.categoryId);
+      } else {
+        await _ChampApiService.cleanupOrphanedSeeds(widget.categoryId);
+        await _ChampApiService.reRunGroupDraw(widget.categoryId);
+      }
 
       final rows   = await _ChampApiService.fetchChampionshipSchedule(
           widget.categoryId);
