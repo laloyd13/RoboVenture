@@ -198,4 +198,12 @@ class ApiConfig {
 
   static String get getChampionshipMatchShells =>
       '$_baseUrl/get_championship_match_shells.php';
+
+  /// qualification_schedule.dart → _ScheduleApiService.fetchTiebreakers()
+  /// GET ?category_id=N  →  [ { tiebreaker_id, group_label, team1_id, ... } ]
+  static String get getTiebreaker => '$_baseUrl/get_tiebreaker.php';
+
+  /// soccer_scoring.dart → SoccerScoringApiService.saveTiebreakerScore()
+  /// POST { tiebreaker_id, team1_score, team2_score, winner_id }
+  static String get saveTiebreakerScore => '$_baseUrl/save_tiebreaker_score.php';
 }

@@ -236,6 +236,68 @@ class _ChampApiService {
     }
   }
 
+  /// Silently re-triggers advance_knockout.php for the last scored match
+  /// of every fully-completed group.  Called on every load/refresh so the
+  /// bracket always reflects the current advance_knockout logic, even when
+  /// group scores already existed before a server-side PHP update.
+  ///
+  /// Fire-and-forget: errors are swallowed so they never block the UI.
+  static Future<void> reRunGroupDraw(int categoryId) async {
+    try {
+      // Step 1 — fetch all group match IDs that are fully scored
+      // We use the existing getScoredMatches endpoint which returns
+      // bracket_type per match; filter to 'group' only.
+      final url = Uri.parse(
+          '${ApiConfig.getScoredMatches}?category_id=$categoryId&bracket_type=group');
+      final resp = await http.get(url).timeout(const Duration(seconds: 10));
+      if (resp.statusCode != 200) return;
+
+      final List<dynamic> data = json.decode(resp.body);
+
+      // Collect the highest (last) scored match_id per group by grouping
+      // on team membership — we just need any one fully-scored group match
+      // to hand to advance_knockout.php, which will then check ALL groups
+      // internally and run the draw when they are all complete.
+      //
+      // Simplest approach: collect all scored group match IDs, sort desc,
+      // and fire advance_knockout for the last one. PHP handles the rest.
+      final Set<int> scoredGroupMatchIds = {};
+      for (final j in data) {
+        final bt  = j['bracket_type']?.toString() ?? '';
+        if (bt != 'group') continue;
+        final mid = int.tryParse(j['match_id'].toString()) ?? 0;
+        if (mid > 0) scoredGroupMatchIds.add(mid);
+      }
+
+      if (scoredGroupMatchIds.isEmpty) return;
+
+      // Use the highest match_id — it is most likely the last group match
+      // scored, so advance_knockout will see all groups complete.
+      final triggerMatchId =
+          scoredGroupMatchIds.reduce((a, b) => a > b ? a : b);
+
+      final advanceUrl = Uri.parse(ApiConfig.advanceKnockout);
+      final body = json.encode({
+        'match_id':       triggerMatchId,
+        'winner_team_id': 0,  // ignored for group bracket_type
+        'loser_team_id':  0,  // ignored for group bracket_type
+        'category_id':    categoryId,
+      });
+
+      final advResp = await http.post(
+        advanceUrl,
+        headers: {'Content-Type': 'application/json'},
+        body: body,
+      ).timeout(const Duration(seconds: 15));
+
+      debugPrint('[reRunGroupDraw] trigger=$triggerMatchId '
+          'status=${advResp.statusCode} body=${advResp.body}');
+    } catch (e) {
+      // Silent — never block load/refresh
+      debugPrint('[reRunGroupDraw] suppressed error: $e');
+    }
+  }
+
   static Future<int> fetchGroupCount(int categoryId) async {
     try {
       final url = Uri.parse(
@@ -618,6 +680,10 @@ class _ChampionshipScheduleScreenState
       // this a near-instant no-op when nothing is stale.
       await _ChampApiService.cleanupOrphanedSeeds(widget.categoryId);
 
+      // Re-run the group draw silently so the bracket always reflects the
+      // current advance_knockout.php logic, even for pre-existing scores.
+      await _ChampApiService.reRunGroupDraw(widget.categoryId);
+
       final groupCount =
           await _ChampApiService.fetchGroupCount(widget.categoryId);
       final mode = _modeFromGroupCount(groupCount > 0 ? groupCount : 4);
@@ -673,6 +739,9 @@ class _ChampionshipScheduleScreenState
       // score deletion are cleared without needing a full re-open.
       // The PHP guard makes this a no-op when nothing is stale.
       await _ChampApiService.cleanupOrphanedSeeds(widget.categoryId);
+
+      // Re-run the group draw silently on every refresh/pulldown.
+      await _ChampApiService.reRunGroupDraw(widget.categoryId);
 
       final rows   = await _ChampApiService.fetchChampionshipSchedule(
           widget.categoryId);

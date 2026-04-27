@@ -7,7 +7,16 @@
 // Calculates MP, W, D, L, GF, GA, GD, Pts live from tbl_score.
 // Groups come from tbl_soccer_groups; goals from score_independentscore.
 //
-// Response: array of rows ordered by group_label ASC, pts DESC, gd DESC, gf DESC
+// Tiebreaker order (FIFA standard):
+//   1. Points (overall)
+//   2. Goal Difference (overall)
+//   3. Goals For (overall)
+//   4. Head-to-Head Points (among tied teams only)
+//   5. Head-to-Head Goal Difference (among tied teams only)
+//   6. Head-to-Head Goals For (among tied teams only)
+//   7. Alphabetical by team_name (replaces FIFA drawing of lots)
+//
+// Response: array of rows ordered by group_label ASC, then FIFA tiebreaker
 // [
 //   {
 //     "group_label": "A",
@@ -86,14 +95,13 @@ $stmt->close();
 // Group score rows by match_id → [ team_id => goals ]
 $matchScores = [];
 while ($r = $scoreRes->fetch_assoc()) {
-    $mid  = intval($r['match_id']);
-    $tid  = intval($r['team_id']);
+    $mid   = intval($r['match_id']);
+    $tid   = intval($r['team_id']);
     $goals = intval($r['goals']);
     $matchScores[$mid][$tid] = $goals;
 }
 
 // ── 3. Initialise standings table ─────────────────────────────────────
-// stats: mp, w, d, l, gf, ga, pts
 $stats = [];
 foreach ($teamInfo as $tid => $_) {
     $stats[$tid] = ['mp' => 0, 'w' => 0, 'd' => 0, 'l' => 0,
@@ -105,11 +113,11 @@ foreach ($matchScores as $mid => $teams) {
     // A match must have exactly 2 team score rows to be fully scored
     if (count($teams) !== 2) continue;
 
-    $tids   = array_keys($teams);
-    $t1     = $tids[0];
-    $t2     = $tids[1];
-    $g1     = $teams[$t1];
-    $g2     = $teams[$t2];
+    $tids = array_keys($teams);
+    $t1   = $tids[0];
+    $t2   = $tids[1];
+    $g1   = $teams[$t1];
+    $g2   = $teams[$t2];
 
     // Only process if both teams are in our group map
     if (!isset($stats[$t1]) || !isset($stats[$t2])) continue;
@@ -130,7 +138,33 @@ foreach ($matchScores as $mid => $teams) {
     }
 }
 
-// ── 5. Build output grouped and sorted ───────────────────────────────
+// ── 5. H2H helper — compute head-to-head stats among a subset of teams ─
+// Only counts matches where BOTH teams are in the subset.
+// Returns [ team_id => ['pts' => x, 'gf' => x, 'ga' => x] ]
+function computeH2H(array $subsetIds, array $matchScores): array {
+    $h2h       = [];
+    $subsetSet = array_flip($subsetIds);
+    foreach ($subsetIds as $tid) {
+        $h2h[$tid] = ['pts' => 0, 'gf' => 0, 'ga' => 0];
+    }
+    foreach ($matchScores as $teams) {
+        if (count($teams) !== 2) continue;
+        $tids = array_keys($teams);
+        $t1   = $tids[0];
+        $t2   = $tids[1];
+        if (!isset($subsetSet[$t1]) || !isset($subsetSet[$t2])) continue;
+        $g1 = $teams[$t1];
+        $g2 = $teams[$t2];
+        $h2h[$t1]['gf'] += $g1; $h2h[$t1]['ga'] += $g2;
+        $h2h[$t2]['gf'] += $g2; $h2h[$t2]['ga'] += $g1;
+        if ($g1 > $g2)      { $h2h[$t1]['pts'] += 3; }
+        elseif ($g2 > $g1)  { $h2h[$t2]['pts'] += 3; }
+        else                { $h2h[$t1]['pts']++; $h2h[$t2]['pts']++; }
+    }
+    return $h2h;
+}
+
+// ── 6. Build output grouped and sorted ────────────────────────────────
 $output = [];
 foreach ($groups as $label => $teamIds) {
     $rows = [];
@@ -151,13 +185,39 @@ foreach ($groups as $label => $teamIds) {
             'pts'         => $s['pts'],
         ];
     }
-    // Sort: pts DESC → gd DESC → gf DESC → team_name ASC
-    usort($rows, function($a, $b) {
+
+    // ── FIFA tiebreaker sort ──────────────────────────────────────────
+    // Steps 1–3: overall PTS → GD → GF
+    // Steps 4–6: H2H PTS → H2H GD → H2H GF (among tied teams only)
+    // Step  7:   Alphabetical (deterministic fallback)
+    usort($rows, function($a, $b) use ($matchScores) {
+        // 1. Overall points
         if ($b['pts'] !== $a['pts']) return $b['pts'] - $a['pts'];
+        // 2. Overall goal difference
         if ($b['gd']  !== $a['gd'])  return $b['gd']  - $a['gd'];
+        // 3. Overall goals for
         if ($b['gf']  !== $a['gf'])  return $b['gf']  - $a['gf'];
+
+        // 4–6. Head-to-head between these two teams
+        $h2h  = computeH2H([$a['team_id'], $b['team_id']], $matchScores);
+        $aPts = $h2h[$a['team_id']]['pts'];
+        $bPts = $h2h[$b['team_id']]['pts'];
+        // 4. H2H points
+        if ($bPts !== $aPts) return $bPts - $aPts;
+
+        $aGD = $h2h[$a['team_id']]['gf'] - $h2h[$a['team_id']]['ga'];
+        $bGD = $h2h[$b['team_id']]['gf'] - $h2h[$b['team_id']]['ga'];
+        // 5. H2H goal difference
+        if ($bGD !== $aGD) return $bGD - $aGD;
+
+        // 6. H2H goals for
+        if ($h2h[$b['team_id']]['gf'] !== $h2h[$a['team_id']]['gf'])
+            return $h2h[$b['team_id']]['gf'] - $h2h[$a['team_id']]['gf'];
+
+        // 7. Alphabetical (replaces drawing of lots)
         return strcmp($a['team_name'], $b['team_name']);
     });
+
     foreach ($rows as $row) {
         $output[] = $row;
     }

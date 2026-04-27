@@ -156,6 +156,34 @@ class SoccerScoringApiService {
     return false; // on error, allow submission to proceed
   }
 
+  static Future<bool> saveTiebreakerScore({
+    required int tiebreakerId,
+    required int team1Score,
+    required int team2Score,
+    required int winnerId,
+  }) async {
+    try {
+      final url = Uri.parse(ApiConfig.saveTiebreakerScore);
+      final res = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'tiebreaker_id': tiebreakerId,
+          'team1_score':   team1Score,
+          'team2_score':   team2Score,
+          'winner_id':     winnerId,
+        }),
+      ).timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final body = json.decode(res.body);
+        return body['success'] == true;
+      }
+    } catch (e) {
+      debugPrint('[SoccerScoring] saveTiebreakerScore error: $e');
+    }
+    return false;
+  }
+
   static Future<bool> submitScore({
     required int matchId, required int roundId, required int teamId,
     required int refereeId, required int teamAScore, required int teamBScore,
@@ -396,6 +424,7 @@ class SoccerScoringPage extends StatefulWidget {
   final String awayTeamName;
   final bool   isChampionship;
   final int?   championshipRoundId;
+  final bool   isTiebreaker;
 
   const SoccerScoringPage({
     super.key,
@@ -407,6 +436,7 @@ class SoccerScoringPage extends StatefulWidget {
     this.awayTeamName        = '',
     this.isChampionship      = false,
     this.championshipRoundId,
+    this.isTiebreaker        = false,
   });
 
   @override
@@ -775,6 +805,33 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
   Future<void> _fetchAllData() async {
     setState(() { _loading = true; _errorMsg = null; });
     try {
+      if (widget.isTiebreaker) {
+        // Penalty Shootout — skip DB match/team fetch, use passed names directly.
+        // Only fetch rounds so the round dropdown works.
+        final rounds = await SoccerScoringApiService.fetchRounds();
+        setState(() {
+          _match = SoccerMatchInfo(
+            matchId: widget.matchId, scheduleId: 0,
+            scheduleStart: '—', scheduleEnd: '—',
+          );
+          _team = SoccerTeamInfo(
+            teamId: widget.teamId,
+            teamName: widget.homeTeamName.isNotEmpty
+                ? widget.homeTeamName : 'Team 1',
+            categoryId: 0,
+          );
+          _awayTeam = SoccerTeamInfo(
+            teamId: widget.awayTeamId,
+            teamName: widget.awayTeamName.isNotEmpty
+                ? widget.awayTeamName : 'Team 2',
+            categoryId: 0,
+          );
+          _selectedRound = rounds.isNotEmpty ? rounds.first : null;
+          _loading = false;
+        });
+        return;
+      }
+
       if (widget.isChampionship) {
         // Championship: skip get_match & get_team — use passed names directly.
         // Only fetch rounds so the round dropdown works.
@@ -1025,6 +1082,43 @@ class _SoccerScoringPageState extends State<SoccerScoringPage>
     final rootNav = Navigator.of(context, rootNavigator: true);
     showDialog(context: context, barrierDismissible: false,
         builder: (_) => const Center(child: CircularProgressIndicator()));
+
+    // ── PENALTY SHOOTOUT: route to save_tiebreaker_score.php ─────────────
+    if (widget.isTiebreaker) {
+      // Determine winner — shootout cannot end in a draw
+      if (teamAScore == teamBScore) {
+        rootNav.pop();
+        setState(() => _isSubmitting = false);
+        _showValidationDialog(
+          icon: Icons.sports_soccer,
+          iconColor: Colors.orangeAccent,
+          title: 'DRAW NOT ALLOWED',
+          message: 'A Penalty Shootout must have a winner. Please adjust the scores.',
+        );
+        return;
+      }
+      final winnerId = teamAScore > teamBScore ? widget.teamId : widget.awayTeamId;
+      final ok = await SoccerScoringApiService.saveTiebreakerScore(
+        tiebreakerId: widget.matchId, // matchId holds tiebreaker_id
+        team1Score:   teamAScore,
+        team2Score:   teamBScore,
+        winnerId:     winnerId,
+      );
+      if (!mounted) return;
+      rootNav.pop();
+      if (ok) {
+        await _MatchStatePersistence.clear(widget.matchId);
+        if (!mounted) return;
+        if (ctx.mounted) Navigator.pop(ctx);
+        if (mounted) Navigator.pop(context, true);
+      } else {
+        setState(() => _isSubmitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Penalty Shootout submission failed.'),
+            backgroundColor: _penaltyRed));
+      }
+      return;
+    }
 
     // ── Duplicate-submission check (server-side) ──────────────────────
     final homeExists = await SoccerScoringApiService.scoreExists(

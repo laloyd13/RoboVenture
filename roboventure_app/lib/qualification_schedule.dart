@@ -60,6 +60,58 @@ class GroupStanding {
   }
 }
 
+// Penalty Shootout match from tbl_soccer_tiebreaker
+class TiebreakerMatch {
+  final int    tiebreakerId;
+  final int    categoryId;
+  final String groupLabel;
+  final int    team1Id;
+  final String team1Name;
+  final int    team2Id;
+  final String team2Name;
+  final int?   team1Score;
+  final int?   team2Score;
+  final int?   winnerId;
+  final String scheduledTime;
+  final int    arenaNumber;
+  final bool   isScored;
+
+  const TiebreakerMatch({
+    required this.tiebreakerId,
+    required this.categoryId,
+    required this.groupLabel,
+    required this.team1Id,
+    required this.team1Name,
+    required this.team2Id,
+    required this.team2Name,
+    this.team1Score,
+    this.team2Score,
+    this.winnerId,
+    required this.scheduledTime,
+    required this.arenaNumber,
+    required this.isScored,
+  });
+
+  factory TiebreakerMatch.fromJson(Map<String, dynamic> j) {
+    int toInt(dynamic v) => int.tryParse((v ?? '0').toString()) ?? 0;
+    return TiebreakerMatch(
+      tiebreakerId:  toInt(j['tiebreaker_id']),
+      categoryId:    toInt(j['category_id']),
+      groupLabel:    j['group_label']?.toString() ?? '',
+      team1Id:       toInt(j['team1_id']),
+      team1Name:     j['team1_name']?.toString() ?? '',
+      team2Id:       toInt(j['team2_id']),
+      team2Name:     j['team2_name']?.toString() ?? '',
+      team1Score:    j['team1_score'] != null ? toInt(j['team1_score']) : null,
+      team2Score:    j['team2_score'] != null ? toInt(j['team2_score']) : null,
+      winnerId:      j['winner_id']   != null ? toInt(j['winner_id'])   : null,
+      scheduledTime: j['scheduled_time']?.toString() ?? '',
+      arenaNumber:   toInt(j['arena_number']),
+      isScored:      j['is_scored'] == true || j['is_scored'] == 1,
+    );
+  }
+}
+
 class ScheduleEntry {
   final int    teamscheduleId;
   final int    matchId;
@@ -276,6 +328,23 @@ class _ScheduleApiService {
     }
   }
 
+  static Future<List<TiebreakerMatch>> fetchTiebreakers(int categoryId) async {
+    try {
+      final url = Uri.parse(
+          '${ApiConfig.getTiebreaker}?category_id=$categoryId');
+      final response = await http.get(url).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        return data
+            .map((j) => TiebreakerMatch.fromJson(j as Map<String, dynamic>))
+            .toList();
+      }
+    } catch (e) {
+      debugPrint('[qual] fetchTiebreakers error: $e');
+    }
+    return [];
+  }
+
   static Future<Map<String, List<GroupStanding>>> fetchGroupStandings(
       int categoryId) async {
     try {
@@ -374,7 +443,8 @@ class _QualificationScheduleScreenState
   Map<String, int> _scoreMap       = {};
 
   // ── Group standings (soccer only) ─────────────────────────────────
-  Map<String, List<GroupStanding>> _standings     = {};
+  Map<String, List<GroupStanding>> _standings      = {};
+  List<TiebreakerMatch>            _tiebreakers    = [];
   bool                              _standingsExpanded = false;
   Timer?                            _standingsTimer;
 
@@ -409,9 +479,16 @@ class _QualificationScheduleScreenState
   }
 
   Future<void> _refreshStandings() async {
-    final data = await _ScheduleApiService.fetchGroupStandings(
-        widget.categoryId);
-    if (mounted) setState(() => _standings = data);
+    final results = await Future.wait([
+      _ScheduleApiService.fetchGroupStandings(widget.categoryId),
+      _ScheduleApiService.fetchTiebreakers(widget.categoryId),
+    ]);
+    if (mounted) {
+      setState(() {
+        _standings    = results[0] as Map<String, List<GroupStanding>>;
+        _tiebreakers  = results[1] as List<TiebreakerMatch>;
+      });
+    }
   }
 
   Future<void> _refreshScoredIds() async {
@@ -483,6 +560,50 @@ class _QualificationScheduleScreenState
       _scheduleFutures[0]!,
       _refreshScoredIds(),
     ]);
+  }
+
+  Future<void> _openTiebreakerScoringPage(
+      BuildContext context, TiebreakerMatch tb) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    if (_activeToastEntry != null && _activeToastEntry!.mounted) {
+      _activeToastEntry!.remove();
+      _activeToastEntry = null;
+    }
+
+    final bool? submitted = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SoccerScoringPage(
+          matchId:      tb.tiebreakerId,
+          teamId:       tb.team1Id,
+          awayTeamId:   tb.team2Id,
+          refereeId:    0,
+          homeTeamName: tb.team1Name,
+          awayTeamName: tb.team2Name,
+          isTiebreaker: true,
+        ),
+      ),
+    );
+
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+
+    if (!mounted) return;
+    await _refreshScoredIds();
+    if (_soccer) await _refreshStandings();
+
+    if (submitted == true) {
+      messenger.showSnackBar(SnackBar(
+        content: const Text('⚽ Penalty Shootout result saved!'),
+        backgroundColor: const Color(0xFF8B0000),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 3),
+      ));
+    }
   }
 
   Future<void> _openScoringPage(BuildContext context, ScheduleEntry entry) async {
@@ -928,12 +1049,12 @@ class _QualificationScheduleScreenState
         // ── Table (shown when expanded and data available) ───────────
         if (_standingsExpanded && hasData)
           SizedBox(
-            // header(28) + col-labels(28) + divider(1) + rows(34 each) + bottom-pad(10)
+            // header(28) + col-labels(28) + divider(1) + rows(34 each) + legend(28) + bottom-pad(10)
             height: ((){
               final maxRows = _standings.values
                   .map((r) => r.length)
                   .fold(0, (a, b) => a > b ? a : b);
-              return 28.0 + 28.0 + 1.0 + maxRows * 34.0 + 10.0;
+              return 28.0 + 28.0 + 1.0 + maxRows * 34.0 + 10.0 + 4.0;
             })(),
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
@@ -1022,10 +1143,12 @@ class _QualificationScheduleScreenState
         scoreMap:       _scoreMap,
         // All arenas share the same future — filtered locally by arena_number
         scheduleFuture: _scheduleFutures[0],
+        tiebreakers:    _tiebreakers,
         isSoccer:       _soccer,
         onRefresh:      () => _refreshSchedule(),
         onTabVisible:   () => _ensureSchedule(),
         onOpenScoring:  (entry) => _openScoringPage(context, entry),
+        onOpenTiebreakerScoring: (tb) => _openTiebreakerScoringPage(context, tb),
       )).toList(),
     );
   }
@@ -1040,9 +1163,11 @@ class _ArenaScheduleView extends StatelessWidget {
   final Set<String>    scoredMatchIds;
   final Map<String, int> scoreMap;
   final Future<List<ScheduleEntry>>? scheduleFuture;
+  final List<TiebreakerMatch> tiebreakers;
   final Future<void> Function() onRefresh;
   final VoidCallback onTabVisible;
   final void Function(ScheduleEntry) onOpenScoring;
+  final void Function(TiebreakerMatch) onOpenTiebreakerScoring;
 
   const _ArenaScheduleView({
     required this.arenaNumber,
@@ -1050,9 +1175,11 @@ class _ArenaScheduleView extends StatelessWidget {
     required this.scoredMatchIds,
     required this.scoreMap,
     required this.scheduleFuture,
+    required this.tiebreakers,
     required this.onRefresh,
     required this.onTabVisible,
     required this.onOpenScoring,
+    required this.onOpenTiebreakerScoring,
   });
 
   // Pivot flat entries into home+away rows for soccer.
@@ -1215,6 +1342,9 @@ class _ArenaScheduleView extends StatelessWidget {
             return _SoccerMatchTable(
               rows:           rows,
               scoredMatchIds: scoredMatchIds,
+              tiebreakers:    tiebreakers
+                  .where((tb) => tb.arenaNumber == arenaNumber)
+                  .toList(),
               onTap: (row) => onOpenScoring(ScheduleEntry(
                 teamscheduleId: 0,
                 matchId:        row.matchId,
@@ -1228,6 +1358,7 @@ class _ArenaScheduleView extends StatelessWidget {
                 homeTeamName:   row.home,
                 awayTeamName:   row.away,
               )),
+              onTapTiebreaker: onOpenTiebreakerScoring,
             );
           }
 
@@ -1281,129 +1412,222 @@ class _GroupTable extends StatelessWidget {
     color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700,
   );
 
+  /// Returns true if [a] and [b] are tied on all three overall tiebreaker
+  /// criteria (pts, gd, gf). When they are tied across the 2nd–3rd boundary
+  /// both rows get a red warning highlight so referees know the standings
+  /// are not yet resolved.
+  static bool _isTied(GroupStanding a, GroupStanding b) =>
+      a.pts == b.pts && a.gd == b.gd && a.gf == b.gf;
+
   @override
   Widget build(BuildContext context) {
+    // ── Detect ties that span the qualification boundary (top 2) ─────────
+    // Any consecutive group of teams with equal pts/gd/gf that straddles the
+    // rank-2/rank-3 boundary gets flagged, so all tied rows are highlighted.
+    final tiedAtBoundary = List<bool>.filled(rows.length, false);
+    if (rows.length >= 3) {
+      // Build groups of consecutive tied teams
+      final List<List<int>> tiedGroups = [];
+      int groupStart = 0;
+      for (int k = 1; k < rows.length; k++) {
+        if (!_isTied(rows[k - 1], rows[k])) {
+          if (k - groupStart > 1) {
+            tiedGroups.add(List.generate(k - groupStart, (x) => groupStart + x));
+          }
+          groupStart = k;
+        }
+      }
+      // Handle last group
+      if (rows.length - groupStart > 1) {
+        tiedGroups.add(List.generate(rows.length - groupStart, (x) => groupStart + x));
+      }
+      // Highlight any tied group that spans the rank-2/rank-3 boundary (indices 1 and 2)
+      for (final group in tiedGroups) {
+        if (group.contains(1) || group.contains(2)) {
+          for (final idx in group) {
+            if (idx < tiedAtBoundary.length) tiedAtBoundary[idx] = true;
+          }
+        }
+      }
+    }
+
     // width = 120 (name) + 24*4 (MP/W/D/L) + 28*4 (GF/GA/GD/PTS)
     //       + 20 (horizontal padding 10*2) + 2 (border 1*2) + 8 (extra buffer)
     const double tableWidth = 120 + 24 * 4 + 28 * 4 + 30;
     return SizedBox(
       width: tableWidth,
       child: Container(
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.10),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white.withOpacity(0.20)),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        // Group label header
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: _accentColor.withOpacity(0.5),
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(8)),
-          ),
-          child: Text('GROUP $label',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                  color: Color(0xFFD4A017),
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.0)),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white.withOpacity(0.20)),
         ),
-        // Column headers
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          child: Row(children: [
-            const SizedBox(width: 120, child: Text('TEAM', style: _hdrStyle)),
-            const SizedBox(width: 24, child: Text('MP', style: _hdrStyle, textAlign: TextAlign.center)),
-            const SizedBox(width: 24, child: Text('W',  style: _hdrStyle, textAlign: TextAlign.center)),
-            const SizedBox(width: 24, child: Text('D',  style: _hdrStyle, textAlign: TextAlign.center)),
-            const SizedBox(width: 24, child: Text('L',  style: _hdrStyle, textAlign: TextAlign.center)),
-            const SizedBox(width: 28, child: Text('GF', style: _hdrStyle, textAlign: TextAlign.center)),
-            const SizedBox(width: 28, child: Text('GA', style: _hdrStyle, textAlign: TextAlign.center)),
-            const SizedBox(width: 28, child: Text('GD', style: _hdrStyle, textAlign: TextAlign.center)),
-            const SizedBox(width: 28, child: Text('PTS', style: _hdrStyle, textAlign: TextAlign.center)),
-          ]),
-        ),
-        const Divider(height: 1, color: Colors.white12),
-        // Data rows
-        ...rows.asMap().entries.map((e) {
-          final i   = e.key;
-          final row = e.value;
-          final isTop2   = i < 2;
-          final gdStr    = row.gd > 0 ? '+${row.gd}' : '${row.gd}';
-          return Container(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          // Group label header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: isTop2
-                  ? Colors.greenAccent.withOpacity(0.06)
-                  : Colors.transparent,
-              border: i < rows.length - 1
-                  ? const Border(
-                      bottom: BorderSide(color: Colors.white10))
-                  : null,
-              borderRadius: i == rows.length - 1
-                  ? const BorderRadius.vertical(
-                      bottom: Radius.circular(8))
-                  : null,
+              color: _accentColor.withOpacity(0.5),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(8)),
             ),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Text('GROUP $label',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: Color(0xFFD4A017),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.0)),
+          ),
+          // Column headers
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             child: Row(children: [
-              // Rank dot + name
-              SizedBox(
-                width: 120,
-                child: Row(children: [
-                  Container(
-                    width: 16, height: 16,
-                    margin: const EdgeInsets.only(right: 6),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isTop2
-                          ? Colors.greenAccent.withOpacity(0.25)
-                          : Colors.white.withOpacity(0.08),
-                    ),
-                    child: Center(
-                      child: Text('${i + 1}',
-                          style: TextStyle(
-                              color: isTop2
-                                  ? Colors.greenAccent
-                                  : Colors.white54,
-                              fontSize: 8,
-                              fontWeight: FontWeight.w900)),
-                    ),
-                  ),
-                  Expanded(
-                    child: Text(row.teamName,
-                        overflow: TextOverflow.ellipsis,
-                        style: _namStyle),
-                  ),
-                ]),
-              ),
-              SizedBox(width: 24, child: Text('${row.mp}', style: _cellStyle, textAlign: TextAlign.center)),
-              SizedBox(width: 24, child: Text('${row.w}',  style: _cellStyle, textAlign: TextAlign.center)),
-              SizedBox(width: 24, child: Text('${row.d}',  style: _cellStyle, textAlign: TextAlign.center)),
-              SizedBox(width: 24, child: Text('${row.l}',  style: _cellStyle, textAlign: TextAlign.center)),
-              SizedBox(width: 28, child: Text('${row.gf}', style: _cellStyle, textAlign: TextAlign.center)),
-              SizedBox(width: 28, child: Text('${row.ga}', style: _cellStyle, textAlign: TextAlign.center)),
-              SizedBox(width: 28, child: Text(gdStr,        style: _cellStyle, textAlign: TextAlign.center)),
-              SizedBox(width: 28,
-                child: Text('${row.pts}',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: isTop2
-                            ? Colors.greenAccent
-                            : Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900)),
-              ),
+              const SizedBox(width: 120, child: Text('TEAM', style: _hdrStyle)),
+              const SizedBox(width: 24, child: Text('MP', style: _hdrStyle, textAlign: TextAlign.center)),
+              const SizedBox(width: 24, child: Text('W',  style: _hdrStyle, textAlign: TextAlign.center)),
+              const SizedBox(width: 24, child: Text('D',  style: _hdrStyle, textAlign: TextAlign.center)),
+              const SizedBox(width: 24, child: Text('L',  style: _hdrStyle, textAlign: TextAlign.center)),
+              const SizedBox(width: 28, child: Text('GF', style: _hdrStyle, textAlign: TextAlign.center)),
+              const SizedBox(width: 28, child: Text('GA', style: _hdrStyle, textAlign: TextAlign.center)),
+              const SizedBox(width: 28, child: Text('GD', style: _hdrStyle, textAlign: TextAlign.center)),
+              const SizedBox(width: 28, child: Text('PTS', style: _hdrStyle, textAlign: TextAlign.center)),
             ]),
-          );
-        }),
-      ]),
+          ),
+          const Divider(height: 1, color: Colors.white12),
+          // Data rows
+          ...rows.asMap().entries.map((e) {
+            final i        = e.key;
+            final row      = e.value;
+            final isTop2   = i < 2;
+            final isTied   = tiedAtBoundary[i];
+            // MP = 0 means no matches played yet — treat like eliminated (gray)
+            final noPlayed = row.mp == 0;
+            final gdStr    = row.gd > 0 ? '+${row.gd}' : '${row.gd}';
+
+            // Row background: gray when no matches played, red when tied at
+            // 2–3 boundary, green tint for top-2 qualifiers, transparent otherwise.
+            final Color rowColor = noPlayed
+                ? Colors.transparent
+                : isTied
+                    ? Colors.redAccent.withOpacity(0.10)
+                    : isTop2
+                        ? Colors.greenAccent.withOpacity(0.06)
+                        : Colors.transparent;
+
+            // Rank dot color: gray when no matches played, red when tied,
+            // green for top-2, grey otherwise.
+            final Color dotBg = noPlayed
+                ? Colors.white.withOpacity(0.08)
+                : isTied
+                    ? Colors.redAccent.withOpacity(0.30)
+                    : isTop2
+                        ? Colors.greenAccent.withOpacity(0.25)
+                        : Colors.white.withOpacity(0.08);
+            final Color dotText = noPlayed
+                ? Colors.white54
+                : isTied
+                    ? Colors.redAccent
+                    : isTop2
+                        ? Colors.greenAccent
+                        : Colors.white54;
+
+            // PTS text color mirrors dot color.
+            final Color ptsColor = noPlayed
+                ? Colors.white
+                : isTied
+                    ? Colors.redAccent
+                    : isTop2
+                        ? Colors.greenAccent
+                        : Colors.white;
+
+            return Container(
+              decoration: BoxDecoration(
+                color: rowColor,
+                border: i < rows.length - 1
+                    ? const Border(
+                        bottom: BorderSide(color: Colors.white10))
+                    : null,
+                borderRadius: i == rows.length - 1
+                    ? const BorderRadius.vertical(
+                        bottom: Radius.circular(8))
+                    : null,
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Row(children: [
+                // Rank dot + name
+                SizedBox(
+                  width: 120,
+                  child: Row(children: [
+                    Container(
+                      width: 16, height: 16,
+                      margin: const EdgeInsets.only(right: 6),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: dotBg,
+                      ),
+                      child: Center(
+                        child: Text('${i + 1}',
+                            style: TextStyle(
+                                color: dotText,
+                                fontSize: 8,
+                                fontWeight: FontWeight.w900)),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(row.teamName,
+                          overflow: TextOverflow.ellipsis,
+                          style: _namStyle),
+                    ),
+                  ]),
+                ),
+                SizedBox(width: 24, child: Text('${row.mp}', style: _cellStyle, textAlign: TextAlign.center)),
+                SizedBox(width: 24, child: Text('${row.w}',  style: _cellStyle, textAlign: TextAlign.center)),
+                SizedBox(width: 24, child: Text('${row.d}',  style: _cellStyle, textAlign: TextAlign.center)),
+                SizedBox(width: 24, child: Text('${row.l}',  style: _cellStyle, textAlign: TextAlign.center)),
+                SizedBox(width: 28, child: Text('${row.gf}', style: _cellStyle, textAlign: TextAlign.center)),
+                SizedBox(width: 28, child: Text('${row.ga}', style: _cellStyle, textAlign: TextAlign.center)),
+                SizedBox(width: 28, child: Text(gdStr,        style: _cellStyle, textAlign: TextAlign.center)),
+                SizedBox(width: 28,
+                  child: Text('${row.pts}',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: ptsColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900)),
+                ),
+              ]),
+            );
+          }),
+          // ── Legend ──────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 4, 10, 4),
+            child: Row(children: [
+              _legendDot(Colors.greenAccent.withOpacity(0.40)),
+              const SizedBox(width: 4),
+              const Text('Qualifies (top 2)',
+                  style: TextStyle(color: Colors.white54, fontSize: 8.5)),
+              const SizedBox(width: 10),
+              _legendDot(Colors.redAccent.withOpacity(0.40)),
+              const SizedBox(width: 4),
+              const Text('Tied — undecided',
+                  style: TextStyle(color: Colors.white54, fontSize: 8.5)),
+              const SizedBox(width: 10),
+              _legendDot(Colors.white.withOpacity(0.15)),
+              const SizedBox(width: 4),
+              const Text('Eliminated',
+                  style: TextStyle(color: Colors.white54, fontSize: 8.5)),
+            ]),
+          ),
+        ]),
       ), // Container
     ); // SizedBox
   }
+
+  static Widget _legendDot(Color color) => Container(
+    width: 8, height: 8,
+    decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+  );
 }
 
 // ─────────────────────────────────────────────
@@ -1412,12 +1636,16 @@ class _GroupTable extends StatelessWidget {
 class _SoccerMatchTable extends StatelessWidget {
   final List<_SoccerMatchRow> rows;
   final Set<String> scoredMatchIds;
+  final List<TiebreakerMatch> tiebreakers;
   final void Function(_SoccerMatchRow) onTap;
+  final void Function(TiebreakerMatch) onTapTiebreaker;
 
   const _SoccerMatchTable({
     required this.rows,
     required this.scoredMatchIds,
+    required this.tiebreakers,
     required this.onTap,
+    required this.onTapTiebreaker,
   });
 
   static const _lblStyle = TextStyle(
@@ -1427,11 +1655,20 @@ class _SoccerMatchTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final totalCount = rows.length + tiebreakers.length;
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      itemCount: rows.length,
-      itemBuilder: (_, i) => _buildRow(rows[i], i),
+      itemCount: totalCount,
+      itemBuilder: (_, i) {
+        // Regular matches first, tiebreaker cards appended at the bottom
+        if (i < rows.length) return _buildRow(rows[i], i);
+        final tb = tiebreakers[i - rows.length];
+        return _PenaltyShootoutCard(
+          match:   tb,
+          onTap:   tb.isScored ? null : () => onTapTiebreaker(tb),
+        );
+      },
     );
   }
 
@@ -1651,6 +1888,240 @@ class _SoccerMatchTable extends StatelessWidget {
           ),
         ]),
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// PENALTY SHOOTOUT MATCH CARD
+// ─────────────────────────────────────────────
+class _PenaltyShootoutCard extends StatelessWidget {
+  final TiebreakerMatch match;
+  final VoidCallback?   onTap;
+
+  const _PenaltyShootoutCard({required this.match, this.onTap});
+
+  static const _lblStyle = TextStyle(
+    color: Colors.white70, fontSize: 9,
+    fontWeight: FontWeight.bold, letterSpacing: 1.2,
+  );
+
+  // Red-themed colours to distinguish from regular purple match cards
+  static const Color _cardBase     = Color(0xFF8B1A1A);
+  static const Color _cardScored   = Color(0xFF5A3030);
+  static const Color _headerBase   = Color(0xFF6B0000);
+  static const Color _headerScored = Color(0xFF4A2020);
+
+  @override
+  Widget build(BuildContext context) {
+    final cardColor   = match.isScored ? _cardScored : _cardBase;
+    final headerColor = match.isScored ? _headerScored : _headerBase;
+
+    final String homeLabel = !match.isScored || match.team1Score == null ? ''
+        : match.team1Score! > match.team2Score! ? 'W'
+        : match.team1Score! < match.team2Score! ? 'L'
+        : '';
+    final String awayLabel = !match.isScored || match.team2Score == null ? ''
+        : match.team2Score! > match.team1Score! ? 'W'
+        : match.team2Score! < match.team1Score! ? 'L'
+        : '';
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: match.isScored
+                ? Colors.redAccent.withOpacity(0.20)
+                : Colors.redAccent.withOpacity(0.55),
+            width: 1,
+          ),
+        ),
+        child: Column(children: [
+          // ── Header strip ──────────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 12),
+            decoration: BoxDecoration(
+              color: headerColor,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+            ),
+            child: Row(children: [
+              Expanded(
+                child: Text(
+                  'PENALTY SHOOTOUT  •  GRP ${match.groupLabel}',
+                  style: const TextStyle(
+                    color: Colors.redAccent,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.1,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ]),
+          ),
+          // ── Teams row ─────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // Team 1
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('TEAM 1', style: _lblStyle),
+                      const SizedBox(height: 3),
+                      Text(match.team1Name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              height: 1.3)),
+                    ],
+                  ),
+                ),
+                // Home W/L/D | VS/score | Away W/L/D — all inline
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (match.isScored && homeLabel.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 5),
+                        child: _resultBadge(homeLabel),
+                      ),
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.white30),
+                      ),
+                      child: match.isScored
+                          ? Text(
+                              '${match.team1Score ?? 0} – ${match.team2Score ?? 0}',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w900))
+                          : const Text('VS',
+                              style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w900)),
+                    ),
+                    if (match.isScored && awayLabel.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 5),
+                        child: _resultBadge(awayLabel),
+                      ),
+                  ],
+                ),
+                // Team 2
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text('TEAM 2', style: _lblStyle),
+                      const SizedBox(height: 3),
+                      Text(match.team2Name,
+                          textAlign: TextAlign.right,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              height: 1.3)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // ── Footer ────────────────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.15),
+              borderRadius:
+                  const BorderRadius.vertical(bottom: Radius.circular(8)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // Time — left
+                Row(mainAxisSize: MainAxisSize.min, children: [
+                  if (match.scheduledTime.isNotEmpty) ...[
+                    Icon(Icons.access_time_rounded,
+                        color: Colors.white.withOpacity(0.55), size: 11),
+                    const SizedBox(width: 4),
+                    Text(match.scheduledTime,
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.55),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5)),
+                  ],
+                ]),
+                // Status — right
+                if (!match.isScored)
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    Text('TAP TO SCORE',
+                        style: TextStyle(
+                            color: Colors.redAccent.withOpacity(0.80),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.8)),
+                    const SizedBox(width: 3),
+                    Icon(Icons.chevron_right_rounded,
+                        color: Colors.redAccent.withOpacity(0.80), size: 14),
+                  ])
+                else
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.check_circle_outline_rounded,
+                        color: Colors.greenAccent.withOpacity(0.7), size: 12),
+                    const SizedBox(width: 4),
+                    Text('COMPLETED',
+                        style: TextStyle(
+                            color: Colors.greenAccent.withOpacity(0.7),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.8)),
+                  ]),
+              ],
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _resultBadge(String result) {
+    final Color bg = result == 'W'
+        ? const Color(0xFF1B5E20).withOpacity(0.55)
+        : const Color(0xFFB71C1C).withOpacity(0.55);
+    final Color borderCol =
+        result == 'W' ? Colors.greenAccent : Colors.redAccent;
+    final Color textCol =
+        result == 'W' ? Colors.greenAccent : Colors.redAccent.shade100;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: borderCol, width: 1),
+      ),
+      child: Text(result,
+          style: TextStyle(
+              color: textCol, fontSize: 9, fontWeight: FontWeight.w900)),
     );
   }
 }
